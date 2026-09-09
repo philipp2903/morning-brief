@@ -13,6 +13,11 @@ on:
         required: false
         default: true
         type: boolean
+      debug_url:
+        description: "TEMP: dump raw fetched HTML for this URL as a build artifact"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -54,6 +59,7 @@ jobs:
           SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
           RECIPE_VERSION: ${{ env.BUILD_VERSION }}
           QT_QPA_PLATFORM: offscreen
+          DEBUG_DUMP_URL: ${{ inputs.debug_url }}
         run: |
           set -o pipefail
           mkdir -p state
@@ -80,7 +86,9 @@ jobs:
           path: |
             morning-brief.epub
             build.log
+            debug_dump.html
           retention-days: 14
+          if-no-files-found: ignore
 
       - name: Send to Kindle
         if: steps.build.outputs.built == 'true' && (github.event_name != 'workflow_dispatch' || inputs.send_email)
