@@ -155,10 +155,17 @@ class MorningBrief(BasicNewsRecipe):
     # survive: ZEIT's lead-image wrapper, Tagesspiegel's header (byline +
     # image, per calibre's own upstream tagesspiegel.recipe), and any
     # <figure> generally.
+    # ZEIT uses more than one article template with different hero-image
+    # wrapper classes (verified live: "article__media-container" on a news
+    # piece, "header-fullwidth__media-container" on a column/feature piece)
+    # but both sit inside the same <header class="article-header">, so key
+    # off that rather than the inner class. //picture on its own since
+    # ZEIT's fullwidth template uses <picture> without wrapping <figure>.
     auto_cleanup_keep = (
-        '//div[contains(@class,"article__media-container")]'
+        '//header[contains(@class,"article-header")]'
         '|//header[contains(@class,"Bo")]'
         '|//figure'
+        '|//picture'
     )
     remove_empty_feeds = True
     ignore_duplicate_articles = {"title", "url"}
@@ -349,19 +356,19 @@ class MorningBrief(BasicNewsRecipe):
     def looks_broken(self, url, raw_html):
         """True if this doesn't look like a real, readable article.
 
-        Checked against the *extracted* article body (what auto_cleanup
-        would actually ship), not the raw page - a raw page always has
-        >500 chars of nav/footer/cookie-banner chrome regardless of how
-        little real article text it contains.
+        Checked against the raw fetched page. Calling calibre's own
+        readability extractor a second time here (outside the single-shot
+        context it's normally used in) turned out to be unreliable - it
+        false-positived on a manually re-verified, fully free ZEIT
+        article - so this deliberately stays a cheap heuristic: a short
+        raw page is a reliable "this is a stub/block page" signal, and
+        genuine paywalls are caught by name below rather than by length,
+        since the surrounding nav/footer chrome pads a raw page past any
+        length threshold regardless of how little article text it holds.
         """
         if not raw_html:
             return True
-        try:
-            extracted = self.extract_readable_article(raw_html, url)
-        except Exception as err:
-            self.log.warn("Readability extraction failed for %s: %s" % (url, err))
-            extracted = raw_html
-        text = re.sub(r"<[^>]+>", " ", extracted)
+        text = re.sub(r"<[^>]+>", " ", raw_html)
         text = re.sub(r"\s+", " ", text).strip().lower()
         if len(text) < MIN_ARTICLE_CHARS:
             return True
