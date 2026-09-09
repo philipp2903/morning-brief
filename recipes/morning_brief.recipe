@@ -221,9 +221,8 @@ class MorningBrief(BasicNewsRecipe):
                 raw = self.index_to_soup(debug_url, raw=True)
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8", "replace")
-                with open("debug_dump.html", "w", encoding="utf-8") as handle:
-                    handle.write(raw)
-                self.log("Wrote debug_dump.html (%d chars) for %s" % (len(raw), debug_url))
+                self.log("DEBUG_DUMP (%d chars) for %s:" % (len(raw), debug_url))
+                self.log("DEBUG_DUMP_START>>>" + raw + "<<<DEBUG_DUMP_END")
             except Exception as err:
                 self.log.error("Debug dump failed: %s" % err)
 
