@@ -43,6 +43,7 @@ jobs:
           SENT_URLS_FILE: state/sent.json
           QT_QPA_PLATFORM: offscreen
         run: |
+          set -o pipefail
           mkdir -p state
           ebook-convert recipes/morning_brief.recipe morning-brief.epub \
             --output-profile kindle_pw3 \
@@ -72,20 +73,13 @@ jobs:
       - name: Record what was delivered
         if: success()
         run: |
+          if [ ! -f state/sent.json ]; then
+            echo "No history file was produced, nothing to record."
+            exit 0
+          fi
           git config user.name "morning-brief"
           git config user.email "actions@users.noreply.github.com"
           git add state/sent.json
           git diff --quiet --cached && exit 0
           git commit -m "chore: articles delivered $(date +%F)"
           git push
-
-      - name: Upload build log and epub
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: morning-brief-${{ github.run_number }}
-          path: |
-            morning-brief.epub
-            build.log
-          retention-days: 7
-          if-no-files-found: warn
