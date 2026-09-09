@@ -50,22 +50,22 @@ stated maximum even if another source is short that day.
 3. THE GUARDIAN - up to 5 slots. International business and foreign
    affairs, especially stories not already well covered by the NYT picks.
 
-4. HANDELSBLATT - up to 4 slots. German politics and business: the
+4. HANDELSBLATT - up to 5 slots. German politics and business: the
    German-language analytical spine of the brief.
 
-5. ZEIT - up to 4 slots. Background and long reads: essays, reported
+5. ZEIT - up to 5 slots. Background and long reads: essays, reported
    features, analysis worth twenty minutes. These need not be from today.
 
-6. TAGESSPIEGEL - up to 4 slots. Berlin: city politics, transport, housing,
+6. TAGESSPIEGEL - up to 5 slots. Berlin: city politics, transport, housing,
    schools, and anything affecting Treptow-Koepenick and Friedrichshagen
    specifically.
 
-7. SPORTSCHAU - up to 2 slots. German sport, especially football and the
+7. SPORTSCHAU - up to 5 slots. German sport, especially football and the
    Bundesliga. Only when the story is genuinely interesting: a manager
    sacked, a club in financial trouble, a title race turning, a notable
    transfer. Never routine match reports, tables or fixture previews.
 
-8. ESPN - up to 2 slots. US sport (NFL, NBA, MLB) quick news: scores,
+8. ESPN - up to 5 slots. US sport (NFL, NBA, MLB) quick news: scores,
    trades, injuries when they actually matter. Same bar as Sportschau:
    genuinely interesting, not routine game recaps or previews.
 
@@ -74,8 +74,8 @@ stated maximum even if another source is short that day.
    long-read bar ZEIT is held to elsewhere in this brief. Prefer this
    over ESPN when a story has real depth to it.
 
-10. QUANTA MAGAZINE - up to 1 slot. One properly substantial science or
-    mathematics background read.
+10. QUANTA MAGAZINE - up to 2 slots. Properly substantial science or
+    mathematics background reads.
 
 Never select two articles covering the same story from different outlets -
 prefer whichever single piece explains it best.
@@ -85,8 +85,8 @@ listicles, crime reporting without wider significance, and repeat coverage
 of a story already carried on a previous day.
 """
 
-# Sum of the per-source maximums above (5+5+5+4+4+4+2+2+5+1).
-MAX_ARTICLES = 37
+# Sum of the per-source maximums above (5+5+5+5+5+5+5+5+5+2).
+MAX_ARTICLES = 47
 
 # Enforced in code as a hard cap after Claude's selection, not just left to
 # the prompt - keys must match the "<Source> - <Section>" feed-title prefix
@@ -95,13 +95,13 @@ SOURCE_SLOT_LIMITS = {
     "Economist": 5,
     "NYT": 5,
     "Guardian": 5,
-    "Handelsblatt": 4,
-    "ZEIT": 4,
-    "Tagesspiegel": 4,
-    "Sportschau": 2,
-    "ESPN": 2,
+    "Handelsblatt": 5,
+    "ZEIT": 5,
+    "Tagesspiegel": 5,
+    "Sportschau": 5,
+    "ESPN": 5,
     "Athletic": 5,
-    "Quanta": 1,
+    "Quanta": 2,
 }
 
 # If Claude cannot be reached, keep this many articles per feed instead.
