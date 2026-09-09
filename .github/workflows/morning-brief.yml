@@ -20,7 +20,7 @@ permissions:
 jobs:
   build-and-send:
     # Runs on philipp's own Mac (residential IP) rather than GitHub's cloud
-    # runners: NYT/FT's bot-detection (DataDome/Cloudflare) blocks the
+    # runners: NYT's bot-detection (DataDome) blocks the
     # well-known datacenter IP ranges GitHub-hosted runners use, independent
     # of login/subscription status. See the "morning-brief" label - this
     # workflow only targets that specific self-hosted runner, not any
@@ -41,12 +41,12 @@ jobs:
         run: |
           echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
 
-      - name: Check Chrome CDP fetcher (NYT / FT)
+      - name: Check Chrome CDP fetcher (NYT)
         run: |
           if curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
-            echo "Chrome CDP reachable on :9333 - NYT/FT will use it."
+            echo "Chrome CDP reachable on :9333 - NYT will use it."
           else
-            echo "::warning::Chrome CDP not reachable on :9333 - NYT/FT articles will be dropped by the quality gate today. See com.morningbrief.chrome.plist."
+            echo "::warning::Chrome CDP not reachable on :9333 - NYT articles will be dropped by the quality gate today. See com.morningbrief.chrome.plist."
           fi
 
       - name: Build the brief
