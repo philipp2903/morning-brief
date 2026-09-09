@@ -1,0 +1,91 @@
+name: Morning Brief
+
+on:
+  schedule:
+    # 03:00 UTC, Monday to Saturday.
+    # Berlin is UTC+2 in summer and UTC+1 in winter, and GitHub can delay
+    # scheduled runs under load, so this is deliberately early.
+    - cron: "0 3 * * 1-6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install headless dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libglx0 libfontconfig1 xdg-utils
+
+      - name: Install Calibre
+        run: |
+          sudo -v
+          wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh \
+            | sudo sh /dev/stdin
+          ebook-convert --version
+
+      - name: Build the brief
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          SENT_URLS_FILE: state/sent.json
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          mkdir -p state
+          ebook-convert recipes/morning_brief.recipe morning-brief.epub \
+            --output-profile kindle_pw3 \
+            --verbose \
+            2>&1 | tee build.log
+          ls -lh morning-brief.epub
+
+      - name: Send to Kindle
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
+        run: |
+          calibre-smtp \
+            --relay "$SMTP_HOST" \
+            --port "$SMTP_PORT" \
+            --username "$SMTP_USER" \
+            --password "$SMTP_PASS" \
+            --encryption-method TLS \
+            --attachment morning-brief.epub \
+            --subject "Morning Brief $(date +%Y-%m-%d)" \
+            "$MAIL_FROM" "$KINDLE_EMAIL" "Today's brief is attached."
+
+      - name: Record what was delivered
+        if: success()
+        run: |
+          git config user.name "morning-brief"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/sent.json
+          git diff --quiet --cached && exit 0
+          git commit -m "chore: articles delivered $(date +%F)"
+          git push
+
+      - name: Upload build log and epub
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: morning-brief-${{ github.run_number }}
+          path: |
+            morning-brief.epub
+            build.log
+          retention-days: 7
+          if-no-files-found: warn
