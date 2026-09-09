@@ -8,6 +8,7 @@
 import datetime
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -69,8 +70,33 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
 # Path to the history of already-delivered articles. Optional: leave the
 # environment variable unset and the brief simply stops deduplicating.
-SENT_URLS_FILE = os.environ.get("SENT_URLS_FILE", "")
+# Resolved to an absolute path so it lands in the same place regardless of
+# what directory calibre's recipe execution happens to run from.
+_sent_urls_file = os.environ.get("SENT_URLS_FILE", "")
+SENT_URLS_FILE = os.path.abspath(_sent_urls_file) if _sent_urls_file else ""
 SENT_WINDOW_DAYS = 14
+
+# Build identifier, stamped into the periodical so a given brief can be
+# traced back to the recipe version that produced it. Set by the workflow;
+# falls back to something recognisable for local runs.
+RECIPE_VERSION = os.environ.get("RECIPE_VERSION", "local-dev").strip() or "local-dev"
+
+# Phrases that show up on bot-blocked or paywalled pages instead of real
+# article text. If a downloaded article's content matches one of these (or
+# is simply too short to be an article), it is dropped rather than shipped.
+BROKEN_CONTENT_MARKERS = (
+    "please enable javascript",
+    "please enable js",
+    "disable any ad blocker",
+    "disable your ad blocker",
+    "enable javascript and disable",
+    "subscribe to continue reading",
+    "you have reached your article limit",
+    "access denied",
+    "are you a robot",
+    "verify you are a human",
+)
+MIN_ARTICLE_CHARS = 500
 
 SELECTION_SYSTEM_PROMPT = """You are the editor of a personal morning \
 newspaper. You are given today's candidate articles and a profile of the \
@@ -115,7 +141,7 @@ class MorningBrief(BasicNewsRecipe):
     auto_cleanup = True
     remove_empty_feeds = True
     ignore_duplicate_articles = {"title", "url"}
-    timefmt = " [%a, %d %B %Y]"
+    timefmt = " [%a, %d %B %Y] - " + RECIPE_VERSION
 
     feeds = [
         ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
@@ -134,6 +160,22 @@ class MorningBrief(BasicNewsRecipe):
         ("Tagesspiegel - Home", "https://www.tagesspiegel.de/contentexport/feed/home"),
         ("Tagesspiegel - Sport", "https://www.tagesspiegel.de/contentexport/feed/sport"),
     ]
+
+    # -- images ---------------------------------------------------------
+
+    def preprocess_html(self, soup):
+        # Some sites lazy-load images via data-src/data-original and leave
+        # src empty until JS runs. remove_javascript = True means that JS
+        # never runs, so without this the image is simply missing.
+        for img in soup.find_all("img"):
+            if img.get("src"):
+                continue
+            for attr in ("data-src", "data-original", "data-lazy-src", "data-srcset"):
+                value = img.get(attr)
+                if value:
+                    img["src"] = value.split()[0]
+                    break
+        return soup
 
     # -- selection ----------------------------------------------------------
 
@@ -176,6 +218,8 @@ class MorningBrief(BasicNewsRecipe):
             for index, (feed, article) in enumerate(candidates):
                 if index not in keep_ids:
                     feed.articles = [a for a in feed.articles if a is not article]
+
+        self.drop_unreadable_articles(feeds)
 
         surviving = [f for f in feeds if f.articles]
         total = sum(len(f.articles) for f in surviving)
@@ -278,6 +322,48 @@ class MorningBrief(BasicNewsRecipe):
                 % (payload.get("stop_reason"), payload.get("content"))
             )
         return text
+
+    # -- quality gate ---------------------------------------------------
+
+    @staticmethod
+    def looks_broken(raw_html):
+        """True if this doesn't look like a real, readable article page."""
+        if not raw_html:
+            return True
+        text = re.sub(r"<[^>]+>", " ", raw_html)
+        text = re.sub(r"\s+", " ", text).strip().lower()
+        if len(text) < MIN_ARTICLE_CHARS:
+            return True
+        return any(marker in text for marker in BROKEN_CONTENT_MARKERS)
+
+    def drop_unreadable_articles(self, feeds):
+        """Fetch each surviving candidate once up front and drop the ones
+        that come back as a bot-block or paywall page instead of an
+        article, so we never ship a "please enable JS" stub to the Kindle.
+        """
+        for feed in feeds:
+            keep = []
+            for article in feed.articles:
+                url = self.article_url(article)
+                if not url:
+                    keep.append(article)
+                    continue
+                try:
+                    raw = self.index_to_soup(url, raw=True)
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", "replace")
+                except Exception as err:
+                    self.log.warn("Quality check could not fetch %s: %s" % (url, err))
+                    keep.append(article)
+                    continue
+                if self.looks_broken(raw):
+                    self.log.warn(
+                        "Dropping unreadable article: [%s] %s (%s)"
+                        % (feed.title, article.title, url)
+                    )
+                else:
+                    keep.append(article)
+            feed.articles = keep
 
     # -- sent-article history ----------------------------------------------
 

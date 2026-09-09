@@ -7,6 +7,12 @@ on:
     # scheduled runs under load, so this is deliberately early.
     - cron: "0 3 * * 1-6"
   workflow_dispatch:
+    inputs:
+      send_email:
+        description: "Email the result to Kindle (turn off to just inspect the build)"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -36,11 +42,16 @@ jobs:
             | sudo sh /dev/stdin
           ebook-convert --version
 
+      - name: Compute build version
+        run: |
+          echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Build the brief
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
-          SENT_URLS_FILE: state/sent.json
+          SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
+          RECIPE_VERSION: ${{ env.BUILD_VERSION }}
           QT_QPA_PLATFORM: offscreen
         run: |
           set -o pipefail
@@ -51,7 +62,18 @@ jobs:
             2>&1 | tee build.log
           ls -lh morning-brief.epub
 
+      - name: Upload epub and build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: morning-brief-${{ env.BUILD_VERSION }}
+          path: |
+            morning-brief.epub
+            build.log
+          retention-days: 14
+
       - name: Send to Kindle
+        if: github.event_name != 'workflow_dispatch' || inputs.send_email
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -67,11 +89,11 @@ jobs:
             --password "$SMTP_PASS" \
             --encryption-method TLS \
             --attachment morning-brief.epub \
-            --subject "Morning Brief $(date +%Y-%m-%d)" \
+            --subject "Morning Brief $(date +%Y-%m-%d) ($BUILD_VERSION)" \
             "$MAIL_FROM" "$KINDLE_EMAIL" "Today's brief is attached."
 
       - name: Record what was delivered
-        if: success()
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.send_email)
         run: |
           if [ ! -f state/sent.json ]; then
             echo "No history file was produced, nothing to record."
