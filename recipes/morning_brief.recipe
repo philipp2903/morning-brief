@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # Morning Brief - a curated daily digest for Kindle.
 #
-# Pulls headlines from NYT, The Guardian, Handelsblatt, ZEIT, Tagesspiegel,
-# Sportschau, ESPN and Quanta, asks Claude to fill each source's quota (see
-# READER_PROFILE) with its best available pieces, downloads only those, and
-# binds them into one periodical.
+# Pulls headlines from The Economist, NYT, The Guardian, Handelsblatt, ZEIT,
+# Tagesspiegel, Sportschau, ESPN, The Athletic and Quanta, asks Claude to fill each
+# source's quota (see READER_PROFILE) with its best available pieces,
+# downloads only those, and binds them into one periodical.
 
 import calendar
 import datetime
@@ -32,39 +32,50 @@ and internationally. Reads The Economist regularly and wants analysis over
 recap: pieces that explain a mechanism or a consequence, not just report a
 number or an event.
 
-The brief draws from eight sources, each with a fixed role and a maximum
+The brief draws from ten sources, each with a fixed role and a maximum
 slot count. Fill each source's slots with its best available pieces for
 that role - it is fine to come in under a source's maximum on a slow day,
 but do not pad a weak slot, and do not give one source more than its
 stated maximum even if another source is short that day.
 
-1. THE NEW YORK TIMES - up to 5 slots. US politics and business; foreign
+1. THE ECONOMIST - up to 5 slots. International economics and business
+   analysis: this is the exact voice and altitude the rest of the brief is
+   calibrated against, so hold every other source's "analysis over recap"
+   pieces to this bar.
+
+2. THE NEW YORK TIMES - up to 5 slots. US politics and business; foreign
    affairs the US is driving. Prefer consequence over process: what a
    decision changes, not who said what about it.
 
-2. THE GUARDIAN - up to 5 slots. International business and foreign
+3. THE GUARDIAN - up to 5 slots. International business and foreign
    affairs, especially stories not already well covered by the NYT picks.
 
-3. HANDELSBLATT - up to 4 slots. German politics and business: the
+4. HANDELSBLATT - up to 4 slots. German politics and business: the
    German-language analytical spine of the brief.
 
-4. ZEIT - up to 4 slots. Background and long reads: essays, reported
+5. ZEIT - up to 4 slots. Background and long reads: essays, reported
    features, analysis worth twenty minutes. These need not be from today.
 
-5. TAGESSPIEGEL - up to 4 slots. Berlin: city politics, transport, housing,
+6. TAGESSPIEGEL - up to 4 slots. Berlin: city politics, transport, housing,
    schools, and anything affecting Treptow-Koepenick and Friedrichshagen
    specifically.
 
-6. SPORTSCHAU - up to 2 slots. German sport, especially football and the
+7. SPORTSCHAU - up to 2 slots. German sport, especially football and the
    Bundesliga. Only when the story is genuinely interesting: a manager
    sacked, a club in financial trouble, a title race turning, a notable
    transfer. Never routine match reports, tables or fixture previews.
 
-7. ESPN - up to 2 slots. US sport (NFL, NBA, MLB). Same bar as Sportschau:
-   genuinely interesting stories, not routine game recaps or previews.
+8. ESPN - up to 2 slots. US sport (NFL, NBA, MLB) quick news: scores,
+   trades, injuries when they actually matter. Same bar as Sportschau:
+   genuinely interesting, not routine game recaps or previews.
 
-8. QUANTA MAGAZINE - up to 1 slot. One properly substantial science or
-   mathematics background read.
+9. THE ATHLETIC - up to 5 slots. US sport (NFL, NBA, MLB), in-depth:
+   analysis and reported features, the sport-desk equivalent of the
+   long-read bar ZEIT is held to elsewhere in this brief. Prefer this
+   over ESPN when a story has real depth to it.
+
+10. QUANTA MAGAZINE - up to 1 slot. One properly substantial science or
+    mathematics background read.
 
 Never select two articles covering the same story from different outlets -
 prefer whichever single piece explains it best.
@@ -74,13 +85,14 @@ listicles, crime reporting without wider significance, and repeat coverage
 of a story already carried on a previous day.
 """
 
-# Sum of the per-source maximums above (5+5+4+4+4+2+2+1).
-MAX_ARTICLES = 27
+# Sum of the per-source maximums above (5+5+5+4+4+4+2+2+5+1).
+MAX_ARTICLES = 37
 
 # Enforced in code as a hard cap after Claude's selection, not just left to
 # the prompt - keys must match the "<Source> - <Section>" feed-title prefix
 # used in `feeds` below.
 SOURCE_SLOT_LIMITS = {
+    "Economist": 5,
     "NYT": 5,
     "Guardian": 5,
     "Handelsblatt": 4,
@@ -88,6 +100,7 @@ SOURCE_SLOT_LIMITS = {
     "Tagesspiegel": 4,
     "Sportschau": 2,
     "ESPN": 2,
+    "Athletic": 5,
     "Quanta": 1,
 }
 
@@ -113,28 +126,37 @@ SENT_WINDOW_DAYS = 14
 # falls back to something recognisable for local runs.
 RECIPE_VERSION = os.environ.get("RECIPE_VERSION", "local-dev").strip() or "local-dev"
 
-# NYT runs bot-detection (DataDome) that blocks Calibre's own fetcher - and
-# also blocks a freshly-launched automated browser, since Playwright/
-# Selenium set a navigator.webdriver flag DataDome checks for. Confirmed by
-# testing: attaching to an already-running, normally-launched Chrome via
-# CDP does not set that flag and gets through to the real page.
+# NYT and The Economist both run Cloudflare/DataDome-style bot-detection
+# that blocks Calibre's own fetcher - and also blocks a freshly-launched
+# automated browser, since Playwright/Selenium set a navigator.webdriver
+# flag those vendors check for. Confirmed by testing: attaching to an
+# already-running, normally-launched Chrome via CDP does not set that flag
+# and gets through to the real page (Economist Espresso's own RSS is also
+# Cloudflare-blocked, unlike its regular section feeds - see the feeds list).
 # CHROME_FETCH_PYTHON/CHROME_FETCH_SCRIPT point at the venv and script that
 # do that; if either is unset, these domains just fall back to Calibre's
 # normal (blocked) fetcher. (kicker.de turned out to be behind the same
 # kind of wall - Sportschau was used instead rather than fighting it too.)
-CHROME_FETCH_DOMAINS = {"www.nytimes.com", "nytimes.com"}
+CHROME_FETCH_DOMAINS = {"www.nytimes.com", "nytimes.com", "www.economist.com", "economist.com"}
 CHROME_FETCH_PYTHON = os.environ.get("CHROME_FETCH_PYTHON", "")
 CHROME_FETCH_SCRIPT = os.environ.get("CHROME_FETCH_SCRIPT", "")
 
 # Phrases that show up on bot-blocked or paywalled pages instead of real
 # article text. If a downloaded article's content matches one of these (or
 # is simply too short to be an article), it is dropped rather than shipped.
+#
+# NOTE: plain "please enable javascript"/"please enable js" used to be here
+# and caused real false positives - that exact phrase is standard
+# <noscript> boilerplate on nearly every modern JS-framework site (confirmed
+# on a genuinely free, manually-verified Handelsblatt article, which is how
+# this was caught), not a bot-block signal by itself. Keep markers specific
+# enough to actually distinguish a block page from ordinary noscript text.
 BROKEN_CONTENT_MARKERS = (
-    "please enable javascript",
-    "please enable js",
+    # NYT/generic DataDome-style block pages actually say "enable JS and
+    # disable any ad blocker" - "disable any ad blocker" alone is specific
+    # enough to catch it without needing the exact "enable JS" wording too.
     "disable any ad blocker",
     "disable your ad blocker",
-    "enable javascript and disable",
     "subscribe to continue reading",
     "you have reached your article limit",
     "access denied",
@@ -179,8 +201,9 @@ Rules:
 class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
     description = (
-        "A curated selection from NYT, The Guardian, Handelsblatt, ZEIT, "
-        "Tagesspiegel, Sportschau, ESPN and Quanta"
+        "A curated selection from The Economist, NYT, The Guardian, "
+        "Handelsblatt, ZEIT, Tagesspiegel, Sportschau, ESPN, The Athletic "
+        "and Quanta"
     )
     __author__ = "Philipp Schett"
     publication_type = "newspaper"
@@ -225,6 +248,12 @@ class MorningBrief(BasicNewsRecipe):
     timefmt = " [%a, %d %B %Y] - " + RECIPE_VERSION
 
     feeds = [
+        # Espresso's own RSS (and the bare /rss) are Cloudflare-blocked even
+        # for feed discovery, unlike these regular section feeds - articles
+        # from any of these still route through the Chrome CDP fetcher via
+        # CHROME_FETCH_DOMAINS for the actual full-text download.
+        ("Economist - Finance & Economics", "https://www.economist.com/finance-and-economics/rss.xml"),
+        ("Economist - Business", "https://www.economist.com/business/rss.xml"),
         ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
         ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
@@ -246,6 +275,14 @@ class MorningBrief(BasicNewsRecipe):
         ("Sportschau - Bundesliga", "https://www.sportschau.de/fussball/bundesliga/index~rss2.xml"),
         ("ESPN - NFL", "https://www.espn.com/espn/rss/nfl/news"),
         ("ESPN - NBA", "https://www.espn.com/espn/rss/nba/news"),
+        # theathletic.com's own domain sits behind Cloudflare like FT did;
+        # The Athletic is owned by NYT and hosted under nytimes.com/athletic/
+        # instead, which is why these use that domain - CHROME_FETCH_DOMAINS
+        # already covers it, and the NYT login session doubles as Athletic
+        # access (NYT All Access includes it).
+        ("Athletic - NFL", "https://www.nytimes.com/athletic/rss/nfl/"),
+        ("Athletic - NBA", "https://www.nytimes.com/athletic/rss/nba/"),
+        ("Athletic - MLB", "https://www.nytimes.com/athletic/rss/mlb/"),
         ("Quanta - Articles", "https://api.quantamagazine.org/feed/"),
     ]
 
