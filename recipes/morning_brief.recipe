@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -230,10 +231,10 @@ class MorningBrief(BasicNewsRecipe):
         ("NYT - World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
         ("NYT - Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
         ("NYT - Magazine", "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml"),
-        ("Handelsblatt - Top-Themen", "http://www.handelsblatt.com/contentexport/feed/top-themen"),
-        ("Handelsblatt - Politik", "http://www.handelsblatt.com/contentexport/feed/politik"),
-        ("Handelsblatt - Unternehmen", "http://www.handelsblatt.com/contentexport/feed/unternehmen"),
-        ("Handelsblatt - Finanzen", "http://www.handelsblatt.com/contentexport/feed/finanzen"),
+        ("Handelsblatt - Top-Themen", "https://www.handelsblatt.com/contentexport/feed/top-themen"),
+        ("Handelsblatt - Politik", "https://www.handelsblatt.com/contentexport/feed/politik"),
+        ("Handelsblatt - Unternehmen", "https://www.handelsblatt.com/contentexport/feed/unternehmen"),
+        ("Handelsblatt - Finanzen", "https://www.handelsblatt.com/contentexport/feed/finanzen"),
         ("ZEIT - Wirtschaft", "https://newsfeed.zeit.de/wirtschaft/index"),
         ("ZEIT - Politik", "https://newsfeed.zeit.de/politik/index"),
         ("ZEIT - Digital", "https://newsfeed.zeit.de/digital/index"),
@@ -292,6 +293,13 @@ class MorningBrief(BasicNewsRecipe):
             article_url = item.get("webUrl", "")
             if not body or not article_url:
                 continue
+            # Article() passes `published` straight into calibre's
+            # dt_factory(), which does datetime(*time_t[0:6]) - it wants a
+            # struct_time, not the raw ISO string the API returns.
+            try:
+                published = time.strptime(item.get("webPublicationDate", ""), "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                published = time.gmtime()
             self._guardian_bodies[article_url] = "<html><body>%s</body></html>" % body
             feed.articles.append(Article(
                 id=item.get("id", article_url),
@@ -299,7 +307,7 @@ class MorningBrief(BasicNewsRecipe):
                 url=article_url,
                 author=fields.get("byline", ""),
                 summary=fields.get("trailText", ""),
-                published=item.get("webPublicationDate"),
+                published=published,
                 content="",
             ))
         self.log("Guardian API returned %d candidate articles." % len(feed.articles))
