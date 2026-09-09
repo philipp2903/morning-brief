@@ -95,7 +95,17 @@ BROKEN_CONTENT_MARKERS = (
     "access denied",
     "are you a robot",
     "verify you are a human",
+    # Tagesspiegel and ZEIT paywalls: the free preview is real but partial,
+    # not broken - it still fails the "read the whole thing on Kindle" bar.
+    "tagesspiegel plus",
+    "abopflichtiger inhalt",
+    "jetzt abonnieren",
 )
+# Measured against the *extracted* article body (what auto_cleanup would
+# actually ship), not the raw page - a raw page is always >500 chars of
+# nav/footer/cookie-banner chrome regardless of how little real article
+# text it contains, which is how a one-paragraph paywall teaser slipped
+# through the first version of this check.
 MIN_ARTICLE_CHARS = 500
 
 SELECTION_SYSTEM_PROMPT = """You are the editor of a personal morning \
@@ -139,6 +149,17 @@ class MorningBrief(BasicNewsRecipe):
     remove_javascript = True
     use_embedded_content = False
     auto_cleanup = True
+    # auto_cleanup's readability scoring only keeps what it judges to be
+    # the main text flow, which drops hero/lead images since they sit
+    # outside the paragraph flow. Force those specific containers to
+    # survive: ZEIT's lead-image wrapper, Tagesspiegel's header (byline +
+    # image, per calibre's own upstream tagesspiegel.recipe), and any
+    # <figure> generally.
+    auto_cleanup_keep = (
+        '//div[contains(@class,"article__media-container")]'
+        '|//header[contains(@class,"Bo")]'
+        '|//figure'
+    )
     remove_empty_feeds = True
     ignore_duplicate_articles = {"title", "url"}
     timefmt = " [%a, %d %B %Y] - " + RECIPE_VERSION
@@ -326,11 +347,22 @@ class MorningBrief(BasicNewsRecipe):
     # -- quality gate ---------------------------------------------------
 
     @staticmethod
-    def looks_broken(raw_html):
-        """True if this doesn't look like a real, readable article page."""
+    def looks_broken(self, url, raw_html):
+        """True if this doesn't look like a real, readable article.
+
+        Checked against the *extracted* article body (what auto_cleanup
+        would actually ship), not the raw page - a raw page always has
+        >500 chars of nav/footer/cookie-banner chrome regardless of how
+        little real article text it contains.
+        """
         if not raw_html:
             return True
-        text = re.sub(r"<[^>]+>", " ", raw_html)
+        try:
+            extracted = self.extract_readable_article(raw_html, url)
+        except Exception as err:
+            self.log.warn("Readability extraction failed for %s: %s" % (url, err))
+            extracted = raw_html
+        text = re.sub(r"<[^>]+>", " ", extracted)
         text = re.sub(r"\s+", " ", text).strip().lower()
         if len(text) < MIN_ARTICLE_CHARS:
             return True
@@ -339,7 +371,8 @@ class MorningBrief(BasicNewsRecipe):
     def drop_unreadable_articles(self, feeds):
         """Fetch each surviving candidate once up front and drop the ones
         that come back as a bot-block or paywall page instead of an
-        article, so we never ship a "please enable JS" stub to the Kindle.
+        article, so we never ship a "please enable JS" stub - or a
+        one-paragraph paywall teaser - to the Kindle.
         """
         for feed in feeds:
             keep = []
@@ -356,7 +389,7 @@ class MorningBrief(BasicNewsRecipe):
                     self.log.warn("Quality check could not fetch %s: %s" % (url, err))
                     keep.append(article)
                     continue
-                if self.looks_broken(raw):
+                if self.looks_broken(url, raw):
                     self.log.warn(
                         "Dropping unreadable article: [%s] %s (%s)"
                         % (feed.title, article.title, url)
