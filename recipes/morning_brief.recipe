@@ -1,17 +1,20 @@
 #!/usr/bin/env python
 # Morning Brief - a curated daily digest for Kindle.
 #
-# Pulls headlines from NYT, ZEIT Online and Der Tagesspiegel, asks Claude to
-# select the most relevant articles for the reader profile below, downloads
-# only those, and binds them into a single periodical.
+# Pulls headlines from FT, NYT, The Guardian, ZEIT, Tagesspiegel and Quanta,
+# asks Claude to fill each source's quota (see READER_PROFILE) with its best
+# available pieces, downloads only those, and binds them into one periodical.
 
 import datetime
 import json
 import os
 import re
+import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 
+from calibre.web.feeds import Article, Feed
 from calibre.web.feeds.news import BasicNewsRecipe
 
 # ---------------------------------------------------------------------------
@@ -22,47 +25,64 @@ from calibre.web.feeds.news import BasicNewsRecipe
 READER_PROFILE = """
 Berlin-based founder and consultant. Runs a small consulting practice focused
 on AI adoption and operating cadence in enterprises, with clients in Germany
-and internationally. Reads The Economist regularly and wants a brief with the
-same centre of gravity: economics and business explained with analysis rather
-than recapped as events.
+and internationally. Reads The Economist regularly and wants analysis over
+recap: pieces that explain a mechanism or a consequence, not just report a
+number or an event.
 
-Priorities, highest first:
+The brief draws from six sources, each with a fixed role and a maximum slot
+count. Fill each source's slots with its best available pieces for that
+role - it is fine to come in under a source's maximum on a slow day, but do
+not pad a weak slot, and do not give one source more than its stated
+maximum even if another source is short that day.
 
-1. ECONOMIC AND BUSINESS NEWS. The core of the brief. Macroeconomics, monetary
-   policy, industrial and trade policy, markets when something structural is
-   happening, major corporate stories, technology and AI as industries. Prefer
-   pieces that explain a mechanism or a consequence over pieces that report a
-   number.
+1. FINANCIAL TIMES - up to 5 slots. Economics, business, markets: the core
+   analytical spine of the brief.
 
-2. US POLITICS AND FOREIGN AFFAIRS. Washington, US foreign policy, and the
-   international stories the US is driving. Prefer consequence over process:
-   what a decision changes, not who said what about it.
+2. THE NEW YORK TIMES - up to 5 slots. US politics and business; foreign
+   affairs the US is driving. Prefer consequence over process: what a
+   decision changes, not who said what about it.
 
-3. BERLIN AND LOCAL NEWS. City politics, transport, housing, schools, and
-   anything affecting Treptow-Koepenick and Friedrichshagen specifically.
+3. THE GUARDIAN - up to 5 slots. Foreign affairs and Europe, especially
+   stories not already well covered by the FT/NYT picks.
 
-4. BACKGROUND AND LONG READS. Two per brief. Essays, reported features, and
-   analysis pieces worth twenty minutes. These need not be from today.
+4. ZEIT - up to 5 slots. Background and long reads: essays, reported
+   features, analysis worth twenty minutes. These need not be from today.
 
-5. GERMAN SPORT, especially football and the Bundesliga. Include at most one,
-   and only when the story is genuinely interesting: a manager sacked, a club
-   in financial trouble, a title race turning, a notable transfer. Never
-   routine match reports, tables or fixture previews.
+5. TAGESSPIEGEL - up to 5 slots. Berlin: city politics, transport, housing,
+   schools, and anything affecting Treptow-Koepenick and Friedrichshagen
+   specifically.
 
-A good brief looks roughly like: five or six economics and business pieces,
-three on US politics and foreign affairs, two Berlin items, two long reads,
-and at most one sport story.
+6. QUANTA MAGAZINE - up to 1 slot. One properly substantial science or
+   mathematics background read.
+
+Never select two articles covering the same story from different outlets -
+prefer whichever single piece explains it best.
 
 Not wanted at all: celebrity and royals, lifestyle and wellness, horoscopes,
-listicles, crime reporting without wider significance, and repeat coverage of
-a story already carried on a previous day.
+listicles, crime reporting without wider significance, routine sport match
+reports/tables/fixture previews, and repeat coverage of a story already
+carried on a previous day.
 """
 
-# How many articles make it into the brief.
-MAX_ARTICLES = 14
+# Sum of the per-source maximums above (5+5+5+5+5+1).
+MAX_ARTICLES = 26
+
+# Enforced in code as a hard cap after Claude's selection, not just left to
+# the prompt - keys must match the "<Source> - <Section>" feed-title prefix
+# used in `feeds` below.
+SOURCE_SLOT_LIMITS = {
+    "FT": 5,
+    "NYT": 5,
+    "Guardian": 5,
+    "ZEIT": 5,
+    "Tagesspiegel": 5,
+    "Quanta": 1,
+}
 
 # If Claude cannot be reached, keep this many articles per feed instead.
-FALLBACK_PER_FEED = 2
+# Low, because there are now ~5 feeds per source - the fallback is a rough
+# "something is better than nothing" safety net, not a curated substitute.
+FALLBACK_PER_FEED = 1
 
 # Sonnet gives better editorial judgement; swap to
 # "claude-haiku-4-5-20251001" if you want it cheaper still.
@@ -80,6 +100,18 @@ SENT_WINDOW_DAYS = 14
 # traced back to the recipe version that produced it. Set by the workflow;
 # falls back to something recognisable for local runs.
 RECIPE_VERSION = os.environ.get("RECIPE_VERSION", "local-dev").strip() or "local-dev"
+
+# NYT and FT both run bot-detection (DataDome / Cloudflare) that blocks
+# Calibre's own fetcher - and also blocks a freshly-launched automated
+# browser, since Playwright/Selenium set a navigator.webdriver flag those
+# vendors check for. Confirmed by testing: attaching to an already-running,
+# normally-launched Chrome via CDP does not set that flag and gets through
+# to the real page. CHROME_FETCH_PYTHON/CHROME_FETCH_SCRIPT point at the
+# venv and script that do that; if either is unset, these domains just fall
+# back to Calibre's normal (blocked) fetcher.
+CHROME_FETCH_DOMAINS = {"www.nytimes.com", "nytimes.com", "www.ft.com", "ft.com"}
+CHROME_FETCH_PYTHON = os.environ.get("CHROME_FETCH_PYTHON", "")
+CHROME_FETCH_SCRIPT = os.environ.get("CHROME_FETCH_SCRIPT", "")
 
 # Phrases that show up on bot-blocked or paywalled pages instead of real
 # article text. If a downloaded article's content matches one of these (or
@@ -100,6 +132,11 @@ BROKEN_CONTENT_MARKERS = (
     "tagesspiegel plus",
     "abopflichtiger inhalt",
     "jetzt abonnieren",
+    # FT/NYT paywalls hit when the Chrome session isn't (or is no longer)
+    # logged in - same "partial preview, not the whole article" logic.
+    "subscribe to unlock this article",
+    "want all of the times? subscribe",
+    "log in to continue reading",
 )
 # Measured against the *extracted* article body (what auto_cleanup would
 # actually ship), not the raw page - a raw page is always >500 chars of
@@ -109,14 +146,15 @@ BROKEN_CONTENT_MARKERS = (
 MIN_ARTICLE_CHARS = 500
 
 SELECTION_SYSTEM_PROMPT = """You are the editor of a personal morning \
-newspaper. You are given today's candidate articles and a profile of the \
-single reader. Select the articles that best serve that reader.
+newspaper. You are given today's candidate articles (each labelled with its \
+source) and a profile of the single reader that states each source's role \
+and maximum slot count. Fill each source's slots with its best available \
+candidates for that source's stated role.
 
 Rules:
-- Choose at most the requested number of articles. Fewer is fine on a slow day.
-- The profile states priorities and a rough target mix. Treat the mix as a
-  guide, not a quota: drop a category entirely rather than pad it with a weak
-  article.
+- Each source's slot count is a MAXIMUM, not a target: it is fine to use
+  fewer of a source's slots on a slow day, but never more than its stated
+  maximum, and never reassign one source's unused slots to another source.
 - Favour substance over volume. Prefer one strong analysis over three thin
   updates on the same event.
 - Never select two articles covering the same story from different outlets.
@@ -128,7 +166,7 @@ Rules:
 
 class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
-    description = "A curated selection from NYT, ZEIT Online and Tagesspiegel"
+    description = "A curated selection from FT, NYT, The Guardian, ZEIT, Tagesspiegel and Quanta"
     __author__ = "Philipp Schett"
     publication_type = "newspaper"
     language = "de"
@@ -172,6 +210,12 @@ class MorningBrief(BasicNewsRecipe):
     timefmt = " [%a, %d %B %Y] - " + RECIPE_VERSION
 
     feeds = [
+        ("FT - FirstFT", "https://www.ft.com/firstft?format=rss"),
+        ("FT - World", "https://www.ft.com/world?format=rss"),
+        ("FT - Companies", "https://www.ft.com/companies?format=rss"),
+        ("FT - Markets", "https://www.ft.com/markets?format=rss"),
+        ("FT - Tech", "https://www.ft.com/technology?format=rss"),
+        ("FT - Opinion", "https://www.ft.com/opinion?format=rss"),
         ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
         ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
@@ -187,7 +231,107 @@ class MorningBrief(BasicNewsRecipe):
         ("Tagesspiegel - Berlin", "https://www.tagesspiegel.de/contentexport/feed/berlin"),
         ("Tagesspiegel - Home", "https://www.tagesspiegel.de/contentexport/feed/home"),
         ("Tagesspiegel - Sport", "https://www.tagesspiegel.de/contentexport/feed/sport"),
+        ("Quanta - Articles", "https://api.quantamagazine.org/feed/"),
     ]
+
+    def __init__(self, *args, **kwargs):
+        BasicNewsRecipe.__init__(self, *args, **kwargs)
+        # url -> full article HTML, populated by fetch_guardian_candidates.
+        # Guardian's own site has no bot-wall, but their API already hands
+        # us the full body in the same call that finds the candidates, so
+        # there's no reason to fetch each article a second time over HTTP.
+        self._guardian_bodies = {}
+
+    # -- The Guardian (Open Platform API) --------------------------------
+
+    GUARDIAN_SECTIONS = ("world",)
+
+    def fetch_guardian_candidates(self):
+        api_key = os.environ.get("GUARDIAN_API_KEY", "").strip()
+        if not api_key:
+            self.log.warn("GUARDIAN_API_KEY is not set; skipping The Guardian.")
+            return None
+
+        from_date = (datetime.date.today() - datetime.timedelta(days=self.oldest_article)).isoformat()
+        params = {
+            "section": "|".join(self.GUARDIAN_SECTIONS),
+            "type": "article",
+            "order-by": "newest",
+            "show-fields": "trailText,body,byline",
+            "page-size": "30",
+            "from-date": from_date,
+            "api-key": api_key,
+        }
+        url = "https://content.guardianapis.com/search?" + urllib.parse.urlencode(params)
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                payload = json.load(response)
+        except Exception as err:
+            self.log.error("Guardian API request failed: %s" % err)
+            return None
+
+        feed = Feed()
+        feed.title = "Guardian - World"
+        feed.articles = []
+        for item in payload.get("response", {}).get("results", []):
+            fields = item.get("fields", {})
+            body = fields.get("body", "")
+            article_url = item.get("webUrl", "")
+            if not body or not article_url:
+                continue
+            self._guardian_bodies[article_url] = "<html><body>%s</body></html>" % body
+            feed.articles.append(Article(
+                id=item.get("id", article_url),
+                title=item.get("webTitle", ""),
+                url=article_url,
+                author=fields.get("byline", ""),
+                summary=fields.get("trailText", ""),
+                published=item.get("webPublicationDate"),
+                content="",
+            ))
+        self.log("Guardian API returned %d candidate articles." % len(feed.articles))
+        return feed
+
+    # -- Chrome CDP fetch (NYT / FT) -------------------------------------
+
+    def needs_chrome_fetch(self, url):
+        host = urllib.parse.urlparse(url).netloc
+        return host in CHROME_FETCH_DOMAINS and CHROME_FETCH_PYTHON and CHROME_FETCH_SCRIPT
+
+    def fetch_via_chrome(self, url):
+        result = subprocess.run(
+            [CHROME_FETCH_PYTHON, CHROME_FETCH_SCRIPT, url],
+            capture_output=True, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.decode("utf-8", "replace")[:500])
+        return result.stdout.decode("utf-8", "replace")
+
+    def fetch_raw_html(self, url):
+        """Raw HTML for a URL: Guardian uses the body its API already
+        handed us, NYT/FT route through the real-Chrome fetcher, and
+        everything else goes through Calibre's normal fetcher."""
+        if url in self._guardian_bodies:
+            return self._guardian_bodies[url]
+        if self.needs_chrome_fetch(url):
+            return self.fetch_via_chrome(url)
+        raw = self.index_to_soup(url, raw=True)
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        return raw
+
+    def preprocess_raw_html(self, raw_html, url):
+        if url in self._guardian_bodies:
+            return self._guardian_bodies[url]
+        # Calibre's own webengine fetch already ran and got blocked by the
+        # time this hook fires; for NYT/FT, throw that away and re-fetch
+        # through the real-Chrome path instead.
+        if self.needs_chrome_fetch(url):
+            try:
+                return self.fetch_via_chrome(url)
+            except Exception as err:
+                self.log.warn("Chrome CDP fetch failed for %s: %s" % (url, err))
+        return raw_html
 
     # -- images ---------------------------------------------------------
 
@@ -209,6 +353,10 @@ class MorningBrief(BasicNewsRecipe):
 
     def parse_feeds(self):
         feeds = super().parse_feeds()
+
+        guardian_feed = self.fetch_guardian_candidates()
+        if guardian_feed and guardian_feed.articles:
+            feeds.append(guardian_feed)
 
         history = self.load_history()
         if history:
@@ -296,17 +444,50 @@ class MorningBrief(BasicNewsRecipe):
             if cleaned.lower().startswith("json"):
                 cleaned = cleaned[4:]
             keep = json.loads(cleaned)["keep"]
-            keep_ids = {int(i) for i in keep if 0 <= int(i) < len(candidates)}
         except Exception as err:
             self.log.error("Could not parse selection response: %s" % err)
             self.log.error("Raw response was: %r" % raw)
             return None
 
-        if not keep_ids:
+        # Preserve Claude's priority order (its rules ask for "most
+        # important first") so the per-source cap below keeps each
+        # source's best picks, not an arbitrary subset.
+        ordered_ids = []
+        seen = set()
+        for i in keep:
+            try:
+                i = int(i)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(candidates) and i not in seen:
+                ordered_ids.append(i)
+                seen.add(i)
+
+        if not ordered_ids:
             self.log.warn("Claude selected nothing.")
             return None
 
-        return set(sorted(keep_ids)[:MAX_ARTICLES])
+        # Enforce each source's slot maximum in code rather than trusting
+        # the prompt alone.
+        per_source_count = {}
+        final_ids = []
+        for i in ordered_ids:
+            feed, _article = candidates[i]
+            source = self.source_name(feed.title)
+            limit = SOURCE_SLOT_LIMITS.get(source)
+            count = per_source_count.get(source, 0)
+            if limit is not None and count >= limit:
+                continue
+            per_source_count[source] = count + 1
+            final_ids.append(i)
+            if len(final_ids) >= MAX_ARTICLES:
+                break
+
+        return set(final_ids)
+
+    @staticmethod
+    def source_name(feed_title):
+        return feed_title.split(" - ", 1)[0]
 
     def call_claude(self, api_key, prompt):
         body = json.dumps({
@@ -388,9 +569,7 @@ class MorningBrief(BasicNewsRecipe):
                     keep.append(article)
                     continue
                 try:
-                    raw = self.index_to_soup(url, raw=True)
-                    if isinstance(raw, bytes):
-                        raw = raw.decode("utf-8", "replace")
+                    raw = self.fetch_raw_html(url)
                 except Exception as err:
                     self.log.warn("Quality check could not fetch %s: %s" % (url, err))
                     keep.append(article)

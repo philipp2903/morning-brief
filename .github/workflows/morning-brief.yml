@@ -41,13 +41,24 @@ jobs:
         run: |
           echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
 
+      - name: Check Chrome CDP fetcher (NYT / FT)
+        run: |
+          if curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
+            echo "Chrome CDP reachable on :9333 - NYT/FT will use it."
+          else
+            echo "::warning::Chrome CDP not reachable on :9333 - NYT/FT articles will be dropped by the quality gate today. See com.morningbrief.chrome.plist."
+          fi
+
       - name: Build the brief
         id: build
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
           SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
           RECIPE_VERSION: ${{ env.BUILD_VERSION }}
+          CHROME_FETCH_PYTHON: ${{ vars.CHROME_FETCH_PYTHON }}
+          CHROME_FETCH_SCRIPT: ${{ github.workspace }}/scripts/fetch_via_chrome.py
           QT_QPA_PLATFORM: offscreen
         run: |
           set -o pipefail
