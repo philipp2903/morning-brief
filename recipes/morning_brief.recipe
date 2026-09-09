@@ -239,7 +239,10 @@ class MorningBrief(BasicNewsRecipe):
     def call_claude(self, api_key, prompt):
         body = json.dumps({
             "model": CLAUDE_MODEL,
-            "max_tokens": 1024,
+            # claude-sonnet-5 reasons before answering; 1024 tokens was
+            # entirely consumed by the (invisible) thinking block, leaving
+            # nothing for the actual JSON reply. Give it headroom.
+            "max_tokens": 4096,
             "system": SELECTION_SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
