@@ -1,0 +1,310 @@
+#!/usr/bin/env python
+# Morning Brief - a curated daily digest for Kindle.
+#
+# Pulls headlines from NYT, ZEIT Online and Der Tagesspiegel, asks Claude to
+# select the most relevant articles for the reader profile below, downloads
+# only those, and binds them into a single periodical.
+
+import datetime
+import json
+import os
+import urllib.error
+import urllib.request
+
+from calibre.web.feeds.news import BasicNewsRecipe
+
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
+
+# What "relevant" means. Edit freely - this is the steering wheel.
+READER_PROFILE = """
+Berlin-based founder and consultant. Runs a small consulting practice focused
+on AI adoption and operating cadence in enterprises, with clients in Germany
+and internationally. Reads The Economist regularly and wants a brief with the
+same centre of gravity: economics and business explained with analysis rather
+than recapped as events.
+
+Priorities, highest first:
+
+1. ECONOMIC AND BUSINESS NEWS. The core of the brief. Macroeconomics, monetary
+   policy, industrial and trade policy, markets when something structural is
+   happening, major corporate stories, technology and AI as industries. Prefer
+   pieces that explain a mechanism or a consequence over pieces that report a
+   number.
+
+2. US POLITICS AND FOREIGN AFFAIRS. Washington, US foreign policy, and the
+   international stories the US is driving. Prefer consequence over process:
+   what a decision changes, not who said what about it.
+
+3. BERLIN AND LOCAL NEWS. City politics, transport, housing, schools, and
+   anything affecting Treptow-Koepenick and Friedrichshagen specifically.
+
+4. BACKGROUND AND LONG READS. Two per brief. Essays, reported features, and
+   analysis pieces worth twenty minutes. These need not be from today.
+
+5. GERMAN SPORT, especially football and the Bundesliga. Include at most one,
+   and only when the story is genuinely interesting: a manager sacked, a club
+   in financial trouble, a title race turning, a notable transfer. Never
+   routine match reports, tables or fixture previews.
+
+A good brief looks roughly like: five or six economics and business pieces,
+three on US politics and foreign affairs, two Berlin items, two long reads,
+and at most one sport story.
+
+Not wanted at all: celebrity and royals, lifestyle and wellness, horoscopes,
+listicles, crime reporting without wider significance, and repeat coverage of
+a story already carried on a previous day.
+"""
+
+# How many articles make it into the brief.
+MAX_ARTICLES = 14
+
+# If Claude cannot be reached, keep this many articles per feed instead.
+FALLBACK_PER_FEED = 2
+
+# Sonnet gives better editorial judgement; swap to
+# "claude-haiku-4-5-20251001" if you want it cheaper still.
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
+
+# Path to the history of already-delivered articles. Optional: leave the
+# environment variable unset and the brief simply stops deduplicating.
+SENT_URLS_FILE = os.environ.get("SENT_URLS_FILE", "")
+SENT_WINDOW_DAYS = 14
+
+SELECTION_SYSTEM_PROMPT = """You are the editor of a personal morning \
+newspaper. You are given today's candidate articles and a profile of the \
+single reader. Select the articles that best serve that reader.
+
+Rules:
+- Choose at most the requested number of articles. Fewer is fine on a slow day.
+- The profile states priorities and a rough target mix. Treat the mix as a
+  guide, not a quota: drop a category entirely rather than pad it with a weak
+  article.
+- Favour substance over volume. Prefer one strong analysis over three thin
+  updates on the same event.
+- Never select two articles covering the same story from different outlets.
+- Answer with JSON only, no prose and no code fences, in exactly this shape:
+  {"keep": [3, 11, 24]}
+  where the numbers are the candidate ids you are keeping, most important
+  first."""
+
+
+class MorningBrief(BasicNewsRecipe):
+    title = "Morning Brief"
+    description = "A curated selection from NYT, ZEIT Online and Tagesspiegel"
+    __author__ = "Philipp Schett"
+    publication_type = "newspaper"
+    language = "de"
+    encoding = "utf-8"
+
+    # Two days rather than one, so that long reads published yesterday
+    # afternoon are still eligible. The sent-article history below stops the
+    # wider window causing repeats.
+    oldest_article = 2
+    max_articles_per_feed = 20
+
+    no_stylesheets = True
+    remove_javascript = True
+    use_embedded_content = False
+    auto_cleanup = True
+    remove_empty_feeds = True
+    ignore_duplicate_articles = {"title", "url"}
+    timefmt = " [%a, %d %B %Y]"
+
+    feeds = [
+        ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
+        ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
+        ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
+        ("NYT - Politics", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"),
+        ("NYT - World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
+        ("NYT - Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
+        ("NYT - Magazine", "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml"),
+        ("ZEIT - Wirtschaft", "https://newsfeed.zeit.de/wirtschaft/index"),
+        ("ZEIT - Politik", "https://newsfeed.zeit.de/politik/index"),
+        ("ZEIT - Digital", "https://newsfeed.zeit.de/digital/index"),
+        ("ZEIT - Gesellschaft", "https://newsfeed.zeit.de/gesellschaft/index"),
+        ("ZEIT - Sport", "https://newsfeed.zeit.de/sport/index"),
+        ("Tagesspiegel - Berlin", "https://www.tagesspiegel.de/contentexport/feed/berlin"),
+        ("Tagesspiegel - Home", "https://www.tagesspiegel.de/contentexport/feed/home"),
+        ("Tagesspiegel - Sport", "https://www.tagesspiegel.de/contentexport/feed/sport"),
+    ]
+
+    # -- selection ----------------------------------------------------------
+
+    def parse_feeds(self):
+        feeds = super().parse_feeds()
+
+        history = self.load_history()
+        if history:
+            skipped = 0
+            for feed in feeds:
+                fresh = []
+                for article in feed.articles:
+                    if self.article_url(article) in history:
+                        skipped += 1
+                    else:
+                        fresh.append(article)
+                feed.articles = fresh
+            self.log("Skipped %d article(s) delivered in the last %d days."
+                     % (skipped, SENT_WINDOW_DAYS))
+
+        candidates = []
+        for feed in feeds:
+            for article in feed.articles:
+                candidates.append((feed, article))
+
+        if not candidates:
+            self.log.warn("No candidate articles found in any feed.")
+            return feeds
+
+        self.log("Collected %d candidate articles." % len(candidates))
+
+        keep_ids = self.select_articles(candidates)
+
+        if keep_ids is None:
+            self.log.warn("Falling back to the first %d articles per feed."
+                          % FALLBACK_PER_FEED)
+            for feed in feeds:
+                feed.articles = feed.articles[:FALLBACK_PER_FEED]
+        else:
+            for index, (feed, article) in enumerate(candidates):
+                if index not in keep_ids:
+                    feed.articles = [a for a in feed.articles if a is not article]
+
+        surviving = [f for f in feeds if f.articles]
+        total = sum(len(f.articles) for f in surviving)
+        self.log("Brief contains %d articles across %d sections."
+                 % (total, len(surviving)))
+
+        for feed in surviving:
+            for article in feed.articles:
+                self.log("  keep: [%s] %s" % (feed.title, article.title))
+
+        self.save_history(history, surviving)
+        return surviving
+
+    def select_articles(self, candidates):
+        """Return a set of indices to keep, or None to trigger the fallback."""
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            self.log.warn("ANTHROPIC_API_KEY is not set.")
+            return None
+
+        lines = []
+        for index, (feed, article) in enumerate(candidates):
+            summary = (getattr(article, "summary", "") or "").strip()
+            summary = " ".join(summary.split())[:240]
+            lines.append(
+                "%d | %s | %s%s"
+                % (index, feed.title, article.title,
+                   " -- " + summary if summary else "")
+            )
+
+        prompt = (
+            "READER PROFILE\n%s\n\n"
+            "Select at most %d articles.\n\n"
+            "CANDIDATES\n%s"
+            % (READER_PROFILE.strip(), MAX_ARTICLES, "\n".join(lines))
+        )
+
+        try:
+            raw = self.call_claude(api_key, prompt)
+        except Exception as err:
+            self.log.error("Claude selection failed: %s" % err)
+            return None
+
+        try:
+            cleaned = raw.strip().strip("`")
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:]
+            keep = json.loads(cleaned)["keep"]
+            keep_ids = {int(i) for i in keep if 0 <= int(i) < len(candidates)}
+        except Exception as err:
+            self.log.error("Could not parse selection response: %s" % err)
+            self.log.debug(raw)
+            return None
+
+        if not keep_ids:
+            self.log.warn("Claude selected nothing.")
+            return None
+
+        return set(sorted(keep_ids)[:MAX_ARTICLES])
+
+    def call_claude(self, api_key, prompt):
+        body = json.dumps({
+            "model": CLAUDE_MODEL,
+            "max_tokens": 1024,
+            "system": SELECTION_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode("utf-8")
+
+        request = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=body,
+            headers={
+                "content-type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as err:
+            raise RuntimeError(
+                "HTTP %s: %s"
+                % (err.code, err.read().decode("utf-8", "replace")[:500])
+            )
+
+        return "".join(
+            block.get("text", "")
+            for block in payload.get("content", [])
+            if block.get("type") == "text"
+        )
+
+    # -- sent-article history ----------------------------------------------
+
+    @staticmethod
+    def article_url(article):
+        return getattr(article, "url", None) or getattr(article, "link", "") or ""
+
+    def load_history(self):
+        if not SENT_URLS_FILE or not os.path.exists(SENT_URLS_FILE):
+            return {}
+        try:
+            with open(SENT_URLS_FILE, "r", encoding="utf-8") as handle:
+                history = json.load(handle)
+        except Exception as err:
+            self.log.warn("Could not read %s: %s" % (SENT_URLS_FILE, err))
+            return {}
+
+        cutoff = datetime.date.today() - datetime.timedelta(days=SENT_WINDOW_DAYS)
+        pruned = {}
+        for url, stamp in history.items():
+            try:
+                if datetime.date.fromisoformat(stamp) >= cutoff:
+                    pruned[url] = stamp
+            except Exception:
+                continue
+        return pruned
+
+    def save_history(self, history, feeds):
+        if not SENT_URLS_FILE:
+            return
+        today = datetime.date.today().isoformat()
+        for feed in feeds:
+            for article in feed.articles:
+                url = self.article_url(article)
+                if url:
+                    history[url] = today
+        try:
+            directory = os.path.dirname(SENT_URLS_FILE)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(SENT_URLS_FILE, "w", encoding="utf-8") as handle:
+                json.dump(history, handle, indent=1, sort_keys=True)
+        except Exception as err:
+            self.log.warn("Could not write %s: %s" % (SENT_URLS_FILE, err))
