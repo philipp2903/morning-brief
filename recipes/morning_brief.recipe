@@ -104,6 +104,11 @@ class MorningBrief(BasicNewsRecipe):
     oldest_article = 2
     max_articles_per_feed = 20
 
+    # NYT returns 403 Forbidden to plain HTTP fetches of article pages (RSS
+    # itself is unaffected). Use the QtWebEngine-based fetcher instead of
+    # calibre's default mechanize one to get past that.
+    browser_type = "webengine"
+
     no_stylesheets = True
     remove_javascript = True
     use_embedded_content = False
