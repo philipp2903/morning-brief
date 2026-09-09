@@ -6,6 +6,7 @@
 # READER_PROFILE) with its best available pieces, downloads only those, and
 # binds them into one periodical.
 
+import calendar
 import datetime
 import json
 import os
@@ -16,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from calibre.web.feeds import Article, Feed
+from calibre.web.feeds import Feed
 from calibre.web.feeds.news import BasicNewsRecipe
 
 # ---------------------------------------------------------------------------
@@ -284,32 +285,41 @@ class MorningBrief(BasicNewsRecipe):
             self.log.error("Guardian API request failed: %s" % err)
             return None
 
-        feed = Feed()
-        feed.title = "Guardian - World"
-        feed.articles = []
+        # populate_from_preparsed_feed() is calibre's own hook for exactly
+        # this - injecting non-RSS article data - and handles the Feed
+        # attributes a hand-built Feed() is easy to get wrong (feed2index()
+        # needs image_url/width/height/alt, which a naive Feed() lacks),
+        # plus age filtering and dedup, the same as the normal RSS path.
+        items = []
         for item in payload.get("response", {}).get("results", []):
             fields = item.get("fields", {})
             body = fields.get("body", "")
             article_url = item.get("webUrl", "")
             if not body or not article_url:
                 continue
-            # Article() passes `published` straight into calibre's
-            # dt_factory(), which does datetime(*time_t[0:6]) - it wants a
-            # struct_time, not the raw ISO string the API returns.
             try:
-                published = time.strptime(item.get("webPublicationDate", ""), "%Y-%m-%dT%H:%M:%SZ")
+                timestamp = calendar.timegm(
+                    time.strptime(item.get("webPublicationDate", ""), "%Y-%m-%dT%H:%M:%SZ")
+                )
             except ValueError:
-                published = time.gmtime()
+                timestamp = time.time()
             self._guardian_bodies[article_url] = "<html><body>%s</body></html>" % body
-            feed.articles.append(Article(
-                id=item.get("id", article_url),
-                title=item.get("webTitle", ""),
-                url=article_url,
-                author=fields.get("byline", ""),
-                summary=fields.get("trailText", ""),
-                published=published,
-                content="",
-            ))
+            items.append({
+                "id": item.get("id", article_url),
+                "title": item.get("webTitle", ""),
+                "url": article_url,
+                "author": fields.get("byline", ""),
+                "description": fields.get("trailText", ""),
+                "content": "",
+                "timestamp": timestamp,
+            })
+
+        feed = Feed(log=self.log)
+        feed.populate_from_preparsed_feed(
+            "Guardian - World", items,
+            oldest_article=self.oldest_article,
+            max_articles_per_feed=self.max_articles_per_feed,
+        )
         self.log("Guardian API returned %d candidate articles." % len(feed.articles))
         return feed
 
