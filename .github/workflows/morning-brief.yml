@@ -13,39 +13,29 @@ on:
         required: false
         default: true
         type: boolean
-      debug_url:
-        description: "TEMP: dump raw fetched HTML for this URL as a build artifact"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: write
 
 jobs:
   build-and-send:
-    runs-on: ubuntu-latest
+    # Runs on philipp's own Mac (residential IP) rather than GitHub's cloud
+    # runners: NYT/FT's bot-detection (DataDome/Cloudflare) blocks the
+    # well-known datacenter IP ranges GitHub-hosted runners use, independent
+    # of login/subscription status. See the "morning-brief" label - this
+    # workflow only targets that specific self-hosted runner, not any
+    # self-hosted runner that might be added to the account later.
+    runs-on: [self-hosted, morning-brief]
     timeout-minutes: 30
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install headless dependencies
+      - name: Use the local Calibre install
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0 \
-            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
-            libglx0 libfontconfig1 xdg-utils
-
-      - name: Install Calibre
-        run: |
-          sudo -v
-          wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh \
-            | sudo sh /dev/stdin
-          ebook-convert --version
+          echo "/Applications/calibre.app/Contents/MacOS" >> "$GITHUB_PATH"
+          "/Applications/calibre.app/Contents/MacOS/ebook-convert" --version
 
       - name: Compute build version
         run: |
@@ -59,7 +49,6 @@ jobs:
           SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
           RECIPE_VERSION: ${{ env.BUILD_VERSION }}
           QT_QPA_PLATFORM: offscreen
-          DEBUG_DUMP_URL: ${{ inputs.debug_url }}
         run: |
           set -o pipefail
           mkdir -p state
@@ -86,9 +75,8 @@ jobs:
           path: |
             morning-brief.epub
             build.log
-            debug_dump.html
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Send to Kindle
         if: steps.build.outputs.built == 'true' && (github.event_name != 'workflow_dispatch' || inputs.send_email)

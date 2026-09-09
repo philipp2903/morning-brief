@@ -210,22 +210,6 @@ class MorningBrief(BasicNewsRecipe):
     def parse_feeds(self):
         feeds = super().parse_feeds()
 
-        # TEMPORARY: dump the raw HTML calibre's webengine fetcher actually
-        # receives for one NYT article, to see whether this is a genuine
-        # bot-block page or something else (e.g. real content behind a
-        # client-side check that's failing for an unrelated reason).
-        # Remove once diagnosed.
-        debug_url = os.environ.get("DEBUG_DUMP_URL", "")
-        if debug_url:
-            try:
-                raw = self.index_to_soup(debug_url, raw=True)
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8", "replace")
-                self.log("DEBUG_DUMP (%d chars) for %s:" % (len(raw), debug_url))
-                self.log("DEBUG_DUMP_START>>>" + raw + "<<<DEBUG_DUMP_END")
-            except Exception as err:
-                self.log.error("Debug dump failed: %s" % err)
-
         history = self.load_history()
         if history:
             skipped = 0
