@@ -47,6 +47,7 @@ jobs:
           echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Build the brief
+        id: build
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
@@ -56,11 +57,20 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p state
-          ebook-convert recipes/morning_brief.recipe morning-brief.epub \
-            --output-profile kindle_pw3 \
-            --verbose \
-            2>&1 | tee build.log
-          ls -lh morning-brief.epub
+          if ebook-convert recipes/morning_brief.recipe morning-brief.epub \
+              --output-profile kindle_pw3 \
+              --verbose \
+              2>&1 | tee build.log; then
+            ls -lh morning-brief.epub
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "No articles found, aborting" build.log; then
+            # Every candidate failed the quality gate (bot-blocked, paywalled,
+            # or otherwise unreadable) - a quiet day, not a broken pipeline.
+            echo "No readable articles survived today; nothing to send."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          else
+            exit 1
+          fi
 
       - name: Upload epub and build log
         if: always()
@@ -73,7 +83,7 @@ jobs:
           retention-days: 14
 
       - name: Send to Kindle
-        if: github.event_name != 'workflow_dispatch' || inputs.send_email
+        if: steps.build.outputs.built == 'true' && (github.event_name != 'workflow_dispatch' || inputs.send_email)
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -93,7 +103,7 @@ jobs:
             "$MAIL_FROM" "$KINDLE_EMAIL" "Today's brief is attached."
 
       - name: Record what was delivered
-        if: success() && (github.event_name != 'workflow_dispatch' || inputs.send_email)
+        if: success() && steps.build.outputs.built == 'true' && (github.event_name != 'workflow_dispatch' || inputs.send_email)
         run: |
           if [ ! -f state/sent.json ]; then
             echo "No history file was produced, nothing to record."
