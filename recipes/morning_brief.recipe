@@ -346,7 +346,6 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- quality gate ---------------------------------------------------
 
-    @staticmethod
     def looks_broken(self, url, raw_html):
         """True if this doesn't look like a real, readable article.
 
