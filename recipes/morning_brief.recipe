@@ -497,6 +497,14 @@ class MorningBrief(BasicNewsRecipe):
         for svg in soup.find_all("svg"):
             svg.decompose()
 
+        # NYT-specific boilerplate ("SKIP ADVERTISEMENT") that Readability
+        # doesn't exclude - it's a real interactive element on nytimes.com
+        # (a skip-link for screen readers), not article content.
+        for el in soup.find_all(string=re.compile(r"skip advertisement", re.IGNORECASE)):
+            parent = el.parent
+            if parent and len(parent.get_text(strip=True)) < 40:
+                parent.decompose()
+
         # Some sites lazy-load images via data-src/data-original and leave
         # src empty until JS runs. remove_javascript = True means that JS
         # never runs, so without this the image is simply missing.
@@ -513,6 +521,35 @@ class MorningBrief(BasicNewsRecipe):
             img.decompose()
 
         return soup
+
+    # A downloaded Handelsblatt article had 8 <img> tags but only 1 real
+    # photo (800x533) - the rest were a 1x1 tracking pixel and 240x135
+    # "related articles" thumbnails Readability didn't exclude. The HTML
+    # markup gives no reliable signal to filter these by (no width/height
+    # left after remove_attributes strips them, and Handelsblatt's own
+    # class names aren't consistent enough to key off). Filter by the
+    # actual downloaded pixel dimensions instead - this is the one point
+    # in the pipeline where real dimensions are known for certain.
+    MIN_IMAGE_DIMENSION = 150  # px, in width or height
+
+    def preprocess_image(self, img_data, image_url):
+        # The Economist illustrates articles with SVG charts/graphics (an
+        # <img src="....svg"> reference, confirmed on a real build) - Kindle's
+        # reflowable EPUB format generally can't render SVG at all, so it
+        # was shipping as an embedded file that just never displayed. PIL
+        # can't decode SVG either, so without this it silently fell through
+        # the dimension check below as "can't tell, don't block".
+        if (image_url or "").lower().endswith(".svg") or img_data[:5] == b"<?xml" or b"<svg" in img_data[:200]:
+            return None
+        try:
+            from PIL import Image
+            import io
+            width, height = Image.open(io.BytesIO(img_data)).size
+            if width < self.MIN_IMAGE_DIMENSION or height < self.MIN_IMAGE_DIMENSION:
+                return None
+        except Exception:
+            pass  # can't tell -> don't block a possibly-legitimate image over it
+        return img_data
 
     # -- selection ----------------------------------------------------------
 
@@ -591,6 +628,12 @@ class MorningBrief(BasicNewsRecipe):
                 self.log("  keep: [%s] %s" % (feed.title, article.title))
 
         self.save_history(history, surviving)
+        # download() mutates these same Feed/Article objects in place as
+        # articles finish downloading (setting .downloaded, rewriting .url
+        # to the local file path) - stash the reference so cleanup() can
+        # see the *finished* state once that's happened. See cleanup() for
+        # why this can't be done in feeds2index() itself.
+        self._final_feeds = surviving
         return surviving
 
     def select_articles(self, candidates):
@@ -600,21 +643,41 @@ class MorningBrief(BasicNewsRecipe):
             self.log.warn("ANTHROPIC_API_KEY is not set.")
             return None
 
+        # Claude previously never saw a publish date or the current time at
+        # all - just title + summary - so it had no way to judge freshness.
+        # Confirmed as the cause of a real complaint: a 2-day-old "upcoming
+        # iPhone launch" preview got selected for a brief delivered the day
+        # *after* that launch already happened.
+        now = datetime.datetime.now(datetime.timezone.utc)
         lines = []
         for index, (feed, article) in enumerate(candidates):
             summary = (getattr(article, "summary", "") or "").strip()
             summary = " ".join(summary.split())[:240]
+            age = ""
+            utctime = getattr(article, "utctime", None)
+            if utctime is not None:
+                hours_old = (now - utctime).total_seconds() / 3600
+                age = " (%.0fh old)" % hours_old
             lines.append(
-                "%d | %s | %s%s"
-                % (index, feed.title, article.title,
+                "%d | %s | %s%s%s"
+                % (index, feed.title, article.title, age,
                    " -- " + summary if summary else "")
             )
 
         prompt = (
             "READER PROFILE\n%s\n\n"
-            "Select at most %d articles.\n\n"
+            "It is currently %s.\n"
+            "Select at most %d articles. Each candidate's age is in "
+            "parentheses. Strongly prefer the freshest candidate on a given "
+            "story - never select one about an event that has, by its age, "
+            "likely already happened or already been superseded by a newer "
+            "development (e.g. a 2-day-old \"X will happen tomorrow\" "
+            "preview once X has probably already occurred). The exception "
+            "is genuine background/long-read pieces, which are timeless by "
+            "design and where a candidate's age is not a mark against it.\n\n"
             "CANDIDATES\n%s"
-            % (READER_PROFILE.strip(), MAX_ARTICLES, "\n".join(lines))
+            % (READER_PROFILE.strip(), now.strftime("%A, %Y-%m-%d %H:%M UTC"),
+               MAX_ARTICLES, "\n".join(lines))
         )
 
         try:
@@ -813,18 +876,39 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- front page -------------------------------------------------------
 
-    def feeds2index(self, feeds):
+    def cleanup(self):
         """Calibre's own front page always links a feed name to that
         feed's own one-article-listing index page (feed_N/index.html) -
         confirmed straight from calibre's template source, not a
         recipe-level setting - which is a pointless extra click for a feed
         that only has a single article, and several sources here often do
-        (Economist/Guardian/Sportschau all landed on 1 some days). Post-
-        process the generated front page so those link straight to the
+        (Economist/Guardian/Sportschau all landed on 1 some days). Rewrite
+        the already-generated front page so those link straight to the
         article instead. Feeds with more than one article keep the normal
         section-index page, since that's still useful there.
+
+        This has to happen here, in cleanup() ("called after all articles
+        have been downloaded" - the one hook documented to run at the
+        right time), not by overriding feeds2index() directly: confirmed
+        straight in calibre's own download() that feeds2index() runs
+        *before* the article-download loop even starts, so
+        article.downloaded is always still False and article.url is still
+        the original web URL, not yet the local file path - the very
+        first version of this fix looked correct but silently never
+        rewrote a single link, which is how this was caught.
         """
-        html = BasicNewsRecipe.feeds2index(self, feeds)
+        feeds = getattr(self, "_final_feeds", None)
+        if not feeds:
+            return
+        index_path = os.path.join(self.output_dir, "index.html")
+        try:
+            with open(index_path, "r", encoding="utf-8") as handle:
+                html = handle.read()
+        except Exception as err:
+            self.log.warn("Could not read %s to rewrite front-page links: %s" % (index_path, err))
+            return
+
+        changed = False
         for i, feed in enumerate(feeds):
             downloaded = [a for a in feed.articles if getattr(a, "downloaded", False)]
             if len(downloaded) != 1:
@@ -835,6 +919,14 @@ class MorningBrief(BasicNewsRecipe):
             target = "feed_%d/%s" % (i, downloaded[0].url)
             pattern = r'(<li id="feed_%d"[^>]*>\s*<a href=")feed_%d/[^"]*(")' % (i, i)
             html, count = re.subn(pattern, lambda m: m.group(1) + target + m.group(2), html, count=1)
-            if not count:
+            if count:
+                changed = True
+            else:
                 self.log.warn("Could not rewrite front-page link for feed_%d (%s)" % (i, feed.title))
-        return html
+
+        if changed:
+            try:
+                with open(index_path, "w", encoding="utf-8") as handle:
+                    handle.write(html)
+            except Exception as err:
+                self.log.warn("Could not write rewritten front page: %s" % err)
