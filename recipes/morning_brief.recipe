@@ -224,6 +224,15 @@ class MorningBrief(BasicNewsRecipe):
     no_stylesheets = True
     remove_javascript = True
     use_embedded_content = False
+    # 47 possible articles across 10 sources with real embedded photos adds
+    # up fast (one earlier 22-article build was already ~19MB) - Send to
+    # Kindle's own limits (50MB email, and a documented tendency to fail
+    # server-side conversion on large/complex files with a generic E999
+    # error) make it worth capping images rather than shipping them at
+    # full source resolution.
+    compress_news_images = True
+    compress_news_images_max_size = 60  # KB
+    scale_news_images = (800, 800)
     auto_cleanup = True
     # auto_cleanup's readability scoring only keeps what it judges to be
     # the main text flow, which drops hero/lead images since they sit
