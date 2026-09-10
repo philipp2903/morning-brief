@@ -264,6 +264,8 @@ class MorningBrief(BasicNewsRecipe):
         # CHROME_FETCH_DOMAINS for the actual full-text download.
         ("Economist - Finance & Economics", "https://www.economist.com/finance-and-economics/rss.xml"),
         ("Economist - Business", "https://www.economist.com/business/rss.xml"),
+        ("Economist - Europe", "https://www.economist.com/europe/rss.xml"),
+        ("Economist - International", "https://www.economist.com/international/rss.xml"),
         ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
         ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
@@ -272,11 +274,9 @@ class MorningBrief(BasicNewsRecipe):
         ("NYT - Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
         ("NYT - Magazine", "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml"),
         ("Handelsblatt - Top-Themen", "https://www.handelsblatt.com/contentexport/feed/top-themen"),
-        ("Handelsblatt - Politik", "https://www.handelsblatt.com/contentexport/feed/politik"),
         ("Handelsblatt - Unternehmen", "https://www.handelsblatt.com/contentexport/feed/unternehmen"),
         ("Handelsblatt - Finanzen", "https://www.handelsblatt.com/contentexport/feed/finanzen"),
         ("ZEIT - Wirtschaft", "https://newsfeed.zeit.de/wirtschaft/index"),
-        ("ZEIT - Politik", "https://newsfeed.zeit.de/politik/index"),
         ("ZEIT - Digital", "https://newsfeed.zeit.de/digital/index"),
         ("ZEIT - Gesellschaft", "https://newsfeed.zeit.de/gesellschaft/index"),
         ("Tagesspiegel - Berlin", "https://www.tagesspiegel.de/contentexport/feed/berlin"),
@@ -321,7 +321,7 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- The Guardian (Open Platform API) --------------------------------
 
-    GUARDIAN_SECTIONS = ("world",)
+    GUARDIAN_SECTIONS = ("world", "business")
 
     def fetch_guardian_candidates(self):
         api_key = os.environ.get("GUARDIAN_API_KEY", "").strip()
@@ -378,7 +378,7 @@ class MorningBrief(BasicNewsRecipe):
 
         feed = Feed(log=self.log)
         feed.populate_from_preparsed_feed(
-            "Guardian - World", items,
+            "Guardian - World & Business", items,
             oldest_article=self.oldest_article,
             max_articles_per_feed=self.max_articles_per_feed,
         )
@@ -785,3 +785,31 @@ class MorningBrief(BasicNewsRecipe):
                 json.dump(history, handle, indent=1, sort_keys=True)
         except Exception as err:
             self.log.warn("Could not write %s: %s" % (SENT_URLS_FILE, err))
+
+    # -- front page -------------------------------------------------------
+
+    def feeds2index(self, feeds):
+        """Calibre's own front page always links a feed name to that
+        feed's own one-article-listing index page (feed_N/index.html) -
+        confirmed straight from calibre's template source, not a
+        recipe-level setting - which is a pointless extra click for a feed
+        that only has a single article, and several sources here often do
+        (Economist/Guardian/Sportschau all landed on 1 some days). Post-
+        process the generated front page so those link straight to the
+        article instead. Feeds with more than one article keep the normal
+        section-index page, since that's still useful there.
+        """
+        html = BasicNewsRecipe.feeds2index(self, feeds)
+        for i, feed in enumerate(feeds):
+            downloaded = [a for a in feed.articles if getattr(a, "downloaded", False)]
+            if len(downloaded) != 1:
+                continue
+            # article.url is calibre's own post-download rewrite to the
+            # local file path relative to feed_N/ (confirmed directly in
+            # calibre's FeedTemplate, which links articles the same way).
+            target = "feed_%d/%s" % (i, downloaded[0].url)
+            pattern = r'(<li id="feed_%d"[^>]*>\s*<a href=")feed_%d/[^"]*(")' % (i, i)
+            html, count = re.subn(pattern, lambda m: m.group(1) + target + m.group(2), html, count=1)
+            if not count:
+                self.log.warn("Could not rewrite front-page link for feed_%d (%s)" % (i, feed.title))
+        return html
