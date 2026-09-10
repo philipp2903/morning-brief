@@ -126,18 +126,21 @@ SENT_WINDOW_DAYS = 14
 # falls back to something recognisable for local runs.
 RECIPE_VERSION = os.environ.get("RECIPE_VERSION", "local-dev").strip() or "local-dev"
 
-# NYT and The Economist both run Cloudflare/DataDome-style bot-detection
-# that blocks Calibre's own fetcher - and also blocks a freshly-launched
-# automated browser, since Playwright/Selenium set a navigator.webdriver
-# flag those vendors check for. Confirmed by testing: attaching to an
-# already-running, normally-launched Chrome via CDP does not set that flag
-# and gets through to the real page (Economist Espresso's own RSS is also
-# Cloudflare-blocked, unlike its regular section feeds - see the feeds list).
-# CHROME_FETCH_PYTHON/CHROME_FETCH_SCRIPT point at the venv and script that
-# do that; if either is unset, these domains just fall back to Calibre's
-# normal (blocked) fetcher. (kicker.de turned out to be behind the same
-# kind of wall - Sportschau was used instead rather than fighting it too.)
-CHROME_FETCH_DOMAINS = {"www.nytimes.com", "nytimes.com", "www.economist.com", "economist.com"}
+# All article fetching (except The Guardian, which already has clean body
+# text from its own API) goes through fetch_via_chrome.py: a real,
+# persistently-running Chrome instance attached over CDP - not a freshly
+# launched automation profile, which both NYT (DataDome) and The Economist
+# (Cloudflare) block on sight, since Playwright/Selenium set a
+# navigator.webdriver flag those vendors check for specifically. That
+# script also runs Mozilla's Readability.js (Firefox Reader View's own
+# extraction library) against the live page and returns the cleaned
+# article, replacing Calibre's own auto_cleanup (see below) everywhere,
+# not just on the two bot-walled sources - a real build showed Calibre's
+# older readability port either throwing outright on modern JS-framework
+# pages (silently falling back to the *raw* page: cookie-vendor lists,
+# sitemaps, nav trees) or failing to separate article body from chrome.
+# If CHROME_FETCH_PYTHON/CHROME_FETCH_SCRIPT are unset, everything falls
+# back to Calibre's normal fetcher + auto_cleanup instead.
 CHROME_FETCH_PYTHON = os.environ.get("CHROME_FETCH_PYTHON", "")
 CHROME_FETCH_SCRIPT = os.environ.get("CHROME_FETCH_SCRIPT", "")
 
@@ -239,28 +242,13 @@ class MorningBrief(BasicNewsRecipe):
     compress_news_images = True
     compress_news_images_max_size = 60  # KB
     scale_news_images = (800, 800)
-    auto_cleanup = True
-    # auto_cleanup's readability scoring only keeps what it judges to be
-    # the main text flow, which drops hero/lead images since they sit
-    # outside the paragraph flow. Force those specific containers to
-    # survive: ZEIT's lead-image wrapper, Tagesspiegel's header (byline +
-    # image, per calibre's own upstream tagesspiegel.recipe), and any
-    # <figure> generally.
-    # ZEIT uses more than one article template with different hero-image
-    # wrapper classes (verified live: "article__media-container" on a news
-    # piece, "header-fullwidth__media-container" on a column/feature piece)
-    # but both sit inside the same <header class="article-header">, so key
-    # off that rather than the inner class. //picture on its own since
-    # ZEIT's fullwidth template uses <picture> without wrapping <figure>.
-    # NOTE: this used to also force-keep bare //figure and //picture
-    # anywhere on the page. On modern SPA sites (confirmed on an Athletic
-    # article) that pulled in unrelated site chrome - a whole navigation
-    # bar's worth of small league-icon images - alongside the real hero
-    # photo, inflating one build to 524 <img> tags across ~20 articles and
-    # very likely contributing to Amazon flagging the epub as non-
-    # reflowable (E016) rather than a normal flowing article. Scoped to
-    # just the two verified hero-image containers now; other sources rely
-    # on auto_cleanup's own in-content-flow image handling instead.
+    # auto_cleanup itself is set dynamically in __init__ (off when the
+    # Chrome+Readability.js path is configured, since that already returns
+    # clean content - see there for why). auto_cleanup_keep only matters
+    # for the fallback case where auto_cleanup does run: force ZEIT's and
+    # Tagesspiegel's hero-image containers to survive, since auto_cleanup's
+    # own readability scoring otherwise drops anything outside the
+    # paragraph flow it judges to be "the article".
     auto_cleanup_keep = (
         '//header[contains(@class,"article-header")]'
         '|//header[contains(@class,"Bo")]'
@@ -315,6 +303,21 @@ class MorningBrief(BasicNewsRecipe):
         # us the full body in the same call that finds the candidates, so
         # there's no reason to fetch each article a second time over HTTP.
         self._guardian_bodies = {}
+        # url -> fetched+extracted HTML, shared between the quality-gate
+        # pre-check and the real download so each article only costs one
+        # Chrome navigation, not two.
+        self._chrome_fetch_cache = {}
+        # When the Chrome+Readability.js path is configured, it already
+        # returns clean extracted content for every article (Guardian
+        # excepted, which is clean for a different reason - see above).
+        # Running Calibre's own (older, less reliable against modern
+        # JS-framework sites - confirmed directly on a real build) auto_
+        # cleanup again on top of that would double-process it, which
+        # caused unreliable results the one other place this recipe tried
+        # it (the quality gate's now-reverted extract_readable_article
+        # experiment). Only used as a fallback when Chrome fetching isn't
+        # configured at all.
+        self.auto_cleanup = not (CHROME_FETCH_PYTHON and CHROME_FETCH_SCRIPT)
 
     # -- The Guardian (Open Platform API) --------------------------------
 
@@ -385,22 +388,32 @@ class MorningBrief(BasicNewsRecipe):
     # -- Chrome CDP fetch (NYT) -------------------------------------------
 
     def needs_chrome_fetch(self, url):
-        host = urllib.parse.urlparse(url).netloc
-        return host in CHROME_FETCH_DOMAINS and CHROME_FETCH_PYTHON and CHROME_FETCH_SCRIPT
+        return bool(CHROME_FETCH_PYTHON) and bool(CHROME_FETCH_SCRIPT)
 
     def fetch_via_chrome(self, url):
+        # Cached because fetch_raw_html (the quality-gate pre-check) and
+        # preprocess_raw_html (the real download) both want this, and a
+        # Chrome navigation + Readability pass isn't cheap - no reason to
+        # pay for it twice per article.
+        if url in self._chrome_fetch_cache:
+            return self._chrome_fetch_cache[url]
         result = subprocess.run(
             [CHROME_FETCH_PYTHON, CHROME_FETCH_SCRIPT, url],
-            capture_output=True, timeout=60,
+            capture_output=True, timeout=90,
         )
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode("utf-8", "replace")[:500])
-        return result.stdout.decode("utf-8", "replace")
+        html = result.stdout.decode("utf-8", "replace")
+        if "/athletic/" in url:
+            html = self.strip_athletic_nav_chrome(html)
+        self._chrome_fetch_cache[url] = html
+        return html
 
     def fetch_raw_html(self, url):
         """Raw HTML for a URL: Guardian uses the body its API already
-        handed us, NYT routes through the real-Chrome fetcher, and
-        everything else goes through Calibre's normal fetcher."""
+        handed us; everything else goes through the real-Chrome +
+        Readability.js fetcher (or Calibre's normal fetcher if that isn't
+        configured)."""
         if url in self._guardian_bodies:
             return self._guardian_bodies[url]
         if self.needs_chrome_fetch(url):
@@ -413,16 +426,14 @@ class MorningBrief(BasicNewsRecipe):
     def preprocess_raw_html(self, raw_html, url):
         if url in self._guardian_bodies:
             return self._guardian_bodies[url]
-        # Calibre's own webengine fetch already ran and got blocked by the
-        # time this hook fires; for NYT, throw that away and re-fetch
-        # through the real-Chrome path instead.
+        # Calibre's own webengine fetch already ran (and, for NYT/
+        # Economist, got blocked) by the time this hook fires - throw it
+        # away and use the real-Chrome + Readability path instead.
         if self.needs_chrome_fetch(url):
             try:
-                raw_html = self.fetch_via_chrome(url)
+                return self.fetch_via_chrome(url)
             except Exception as err:
                 self.log.warn("Chrome CDP fetch failed for %s: %s" % (url, err))
-        if "/athletic/" in url:
-            raw_html = self.strip_athletic_nav_chrome(raw_html)
         return raw_html
 
     @staticmethod
@@ -452,6 +463,15 @@ class MorningBrief(BasicNewsRecipe):
     MAX_IMAGES_PER_ARTICLE = 8
 
     def preprocess_html(self, soup):
+        # Inline SVGs are essentially always UI chrome (icon sprite sheets
+        # with dozens of <symbol> definitions, social-share icons, etc.),
+        # never real article content - a real image is an <img>. Confirmed
+        # directly: Readability.js pulled a whole ZEIT icon-sprite sheet
+        # into "extracted content" because the <symbol> elements carry
+        # descriptive <title> text that reads as plausible content.
+        for svg in soup.find_all("svg"):
+            svg.decompose()
+
         # Some sites lazy-load images via data-src/data-original and leave
         # src empty until JS runs. remove_javascript = True means that JS
         # never runs, so without this the image is simply missing.

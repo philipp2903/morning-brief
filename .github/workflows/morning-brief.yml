@@ -26,7 +26,10 @@ jobs:
     # workflow only targets that specific self-hosted runner, not any
     # self-hosted runner that might be added to the account later.
     runs-on: [self-hosted, morning-brief]
-    timeout-minutes: 30
+    # Every article now goes through a real Chrome navigation + Readability
+    # extraction (not just NYT/Economist), so this needs more headroom
+    # than the old Calibre-only pipeline.
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -41,12 +44,12 @@ jobs:
         run: |
           echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
 
-      - name: Check Chrome CDP fetcher (NYT)
+      - name: Check Chrome CDP fetcher
         run: |
           if curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
-            echo "Chrome CDP reachable on :9333 - NYT will use it."
+            echo "Chrome CDP reachable on :9333 - all sources will use it for fetching + extraction."
           else
-            echo "::warning::Chrome CDP not reachable on :9333 - NYT articles will be dropped by the quality gate today. See com.morningbrief.chrome.plist."
+            echo "::warning::Chrome CDP not reachable on :9333 - falls back to Calibre's own (blocked for NYT/Economist, less reliable extraction for everything else) fetcher today. See com.morningbrief.chrome.plist."
           fi
 
       - name: Build the brief
