@@ -63,11 +63,11 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p state
-          if ebook-convert recipes/morning_brief.recipe morning-brief.azw3 \
+          if ebook-convert recipes/morning_brief.recipe morning-brief.epub \
               --output-profile kindle_pw3 \
               --verbose \
               2>&1 | tee build.log; then
-            ls -lh morning-brief.azw3
+            ls -lh morning-brief.epub
             echo "built=true" >> "$GITHUB_OUTPUT"
           elif grep -q "No articles found, aborting" build.log; then
             # Every candidate failed the quality gate (bot-blocked, paywalled,
@@ -78,13 +78,13 @@ jobs:
             exit 1
           fi
 
-      - name: Upload azw3 and build log
+      - name: Upload epub and build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: morning-brief-${{ env.BUILD_VERSION }}
           path: |
-            morning-brief.azw3
+            morning-brief.epub
             build.log
           retention-days: 14
           if-no-files-found: warn
@@ -105,7 +105,7 @@ jobs:
             --username "$SMTP_USER" \
             --password "$SMTP_PASS" \
             --encryption-method TLS \
-            --attachment morning-brief.azw3 \
+            --attachment morning-brief.epub \
             --subject "Morning Brief $(date +%Y-%m-%d) ($BUILD_VERSION)" \
             "$MAIL_FROM" "$KINDLE_EMAIL" "Today's brief is attached."
 
