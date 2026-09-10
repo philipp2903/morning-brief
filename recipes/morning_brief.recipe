@@ -441,6 +441,16 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- images ---------------------------------------------------------
 
+    # After the site-specific fixes (Athletic nav icons, live-blog
+    # exclusion) there were still individual articles with 40-65 <img>
+    # tags each - not always identifiable noise, sometimes just a
+    # legitimately photo-heavy piece (an ESPN "tier every team" article
+    # genuinely has ~30 team logos). Rather than keep chasing each site's
+    # specific clutter pattern, cap it generally: real reading value is in
+    # the first few images (hero + early inline), and this directly bounds
+    # file size/complexity regardless of which source causes it.
+    MAX_IMAGES_PER_ARTICLE = 8
+
     def preprocess_html(self, soup):
         # Some sites lazy-load images via data-src/data-original and leave
         # src empty until JS runs. remove_javascript = True means that JS
@@ -453,6 +463,10 @@ class MorningBrief(BasicNewsRecipe):
                 if value:
                     img["src"] = value.split()[0]
                     break
+
+        for img in soup.find_all("img")[self.MAX_IMAGES_PER_ARTICLE:]:
+            img.decompose()
+
         return soup
 
     # -- selection ----------------------------------------------------------
@@ -463,7 +477,11 @@ class MorningBrief(BasicNewsRecipe):
     # independently from both Guardian (liveblog) and Sportschau
     # (Liveticker) candidates - one Sportschau live-ticker page alone
     # carried 117 <img> tags in a real build.
-    LIVE_BLOG_MARKERS = ("liveblog", "live-blog", "liveticker", "live-ticker", "live-updates")
+    LIVE_BLOG_MARKERS = (
+        "liveblog", "live-blog", "liveticker", "live-ticker", "live-updates",
+        # German broadcast/ticker phrasing (e.g. "... live im Ersten")
+        "live im ersten", "live im zdf", "livestream", "live-stream",
+    )
 
     def is_live_blog(self, feed, article):
         haystack = " ".join((self.article_url(article), article.title or "")).lower()
