@@ -418,10 +418,26 @@ class MorningBrief(BasicNewsRecipe):
         # through the real-Chrome path instead.
         if self.needs_chrome_fetch(url):
             try:
-                return self.fetch_via_chrome(url)
+                raw_html = self.fetch_via_chrome(url)
             except Exception as err:
                 self.log.warn("Chrome CDP fetch failed for %s: %s" % (url, err))
+        if "/athletic/" in url:
+            raw_html = self.strip_athletic_nav_chrome(raw_html)
         return raw_html
+
+    @staticmethod
+    def strip_athletic_nav_chrome(raw_html):
+        """The Athletic's league-picker nav bar sits in the same container
+        as the article body on their Next.js pages, so readability's own
+        content-boundary detection can't separate it out - confirmed on a
+        real build where 3 Athletic articles alone accounted for ~250 <img>
+        tags, all league logos from this one CDN, none of them the actual
+        article. Their CSS class names are build-hashed (unstable), so
+        match by the stable image source pattern instead.
+        """
+        if "cdn-league-logos.theathletic.com" not in raw_html:
+            return raw_html
+        return re.sub(r'<img\b[^>]*cdn-league-logos\.theathletic\.com[^>]*>', "", raw_html)
 
     # -- images ---------------------------------------------------------
 
@@ -441,12 +457,27 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- selection ----------------------------------------------------------
 
+    # Continuously-updating pages, not static articles: dozens of small
+    # entries (each often with its own avatar/logo image), no coherent
+    # single read, and a poor fit for a point-in-time Kindle brief. Seen
+    # independently from both Guardian (liveblog) and Sportschau
+    # (Liveticker) candidates - one Sportschau live-ticker page alone
+    # carried 117 <img> tags in a real build.
+    LIVE_BLOG_MARKERS = ("liveblog", "live-blog", "liveticker", "live-ticker", "live-updates")
+
+    def is_live_blog(self, feed, article):
+        haystack = " ".join((self.article_url(article), article.title or "")).lower()
+        return any(marker in haystack for marker in self.LIVE_BLOG_MARKERS)
+
     def parse_feeds(self):
         feeds = super().parse_feeds()
 
         guardian_feed = self.fetch_guardian_candidates()
         if guardian_feed and guardian_feed.articles:
             feeds.append(guardian_feed)
+
+        for feed in feeds:
+            feed.articles = [a for a in feed.articles if not self.is_live_blog(feed, a)]
 
         history = self.load_history()
         if history:
