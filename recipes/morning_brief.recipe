@@ -224,6 +224,12 @@ class MorningBrief(BasicNewsRecipe):
     no_stylesheets = True
     remove_javascript = True
     use_embedded_content = False
+    # Defensive: strip any inline sizing/positioning that survives from a
+    # source site's markup (no_stylesheets only drops external <link
+    # rel=stylesheet>, not inline style=/width=/height= attributes).
+    # Calibre's own upstream financial_times.recipe does the same for
+    # exactly this reason.
+    remove_attributes = ["style", "width", "height"]
     # 47 possible articles across 10 sources with real embedded photos adds
     # up fast (one earlier 22-article build was already ~19MB) - Send to
     # Kindle's own limits (50MB email, and a documented tendency to fail
@@ -246,11 +252,18 @@ class MorningBrief(BasicNewsRecipe):
     # but both sit inside the same <header class="article-header">, so key
     # off that rather than the inner class. //picture on its own since
     # ZEIT's fullwidth template uses <picture> without wrapping <figure>.
+    # NOTE: this used to also force-keep bare //figure and //picture
+    # anywhere on the page. On modern SPA sites (confirmed on an Athletic
+    # article) that pulled in unrelated site chrome - a whole navigation
+    # bar's worth of small league-icon images - alongside the real hero
+    # photo, inflating one build to 524 <img> tags across ~20 articles and
+    # very likely contributing to Amazon flagging the epub as non-
+    # reflowable (E016) rather than a normal flowing article. Scoped to
+    # just the two verified hero-image containers now; other sources rely
+    # on auto_cleanup's own in-content-flow image handling instead.
     auto_cleanup_keep = (
         '//header[contains(@class,"article-header")]'
         '|//header[contains(@class,"Bo")]'
-        '|//figure'
-        '|//picture'
     )
     remove_empty_feeds = True
     ignore_duplicate_articles = {"title", "url"}
