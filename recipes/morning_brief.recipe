@@ -32,6 +32,16 @@ and internationally. Reads The Economist regularly and wants analysis over
 recap: pieces that explain a mechanism or a consequence, not just report a
 number or an event.
 
+Overall priority, highest first, when judging how much a category deserves
+strong picks versus a weaker slot going unfilled: (1) economics and
+business, (2) sport, (3) Berlin, (4) US politics and foreign affairs,
+(5) German national politics. This is about emphasis and how strict to be
+within a category, not a quota - the per-source maximums below still cap
+each source regardless of where its category sits in this list, and German
+politics being lowest is exactly why it no longer has dedicated feeds at
+all (see HANDELSBLATT/ZEIT below): only cover it when it surfaces
+incidentally through another source's own candidates.
+
 The brief draws from ten sources, each with a fixed role and a maximum
 slot count. Fill each source's slots with its best available pieces for
 that role - it is fine to come in under a source's maximum on a slow day,
@@ -50,8 +60,9 @@ stated maximum even if another source is short that day.
 3. THE GUARDIAN - up to 5 slots. International business and foreign
    affairs, especially stories not already well covered by the NYT picks.
 
-4. HANDELSBLATT - up to 5 slots. German politics and business: the
-   German-language analytical spine of the brief.
+4. HANDELSBLATT - up to 5 slots. German business: the German-language
+   analytical spine of the brief. Not politics - that's a low overall
+   priority here and has no dedicated feed of its own any more.
 
 5. ZEIT - up to 5 slots. Background and long reads: essays, reported
    features, analysis worth twenty minutes. These need not be from today.
@@ -223,6 +234,13 @@ class MorningBrief(BasicNewsRecipe):
     # itself is unaffected). Use the QtWebEngine-based fetcher instead of
     # calibre's default mechanize one to get past that.
     browser_type = "webengine"
+    # Calibre's default (12) is fine for lightweight HTTP downloads, but
+    # every article here costs a real Chrome page load + JS injection now.
+    # A run that hung for over an hour (later cancelled) coincided with the
+    # machine being under real memory pressure (~65MB free at the time) -
+    # 12 of those firing concurrently through one shared Chrome instance is
+    # a plausible way to get there. Much lower concurrency, deliberately.
+    simultaneous_downloads = 3
 
     no_stylesheets = True
     remove_javascript = True
