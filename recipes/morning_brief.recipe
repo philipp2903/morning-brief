@@ -178,7 +178,14 @@ BROKEN_CONTENT_MARKERS = (
     "verify you are a human",
     # Tagesspiegel and ZEIT paywalls: the free preview is real but partial,
     # not broken - it still fails the "read the whole thing on Kindle" bar.
-    "tagesspiegel plus",
+    # NOTE: bare "tagesspiegel plus" used to be here and was a real false
+    # positive once logged in - Tagesspiegel's own related-links widget
+    # mentions "Tagesspiegel Plus (T+)" by product name on plenty of fully
+    # unlocked articles too (confirmed directly: a genuinely full 3756-char
+    # article got dropped over this exact phrase, deep in a "more from
+    # this section" block, nothing to do with that article's own access).
+    # MIN_ARTICLE_CHARS plus the more specific markers below still catch a
+    # truly locked page.
     "abopflichtiger inhalt",
     "jetzt abonnieren",
     # NYT paywall hit when the Chrome session isn't (or is no longer) logged
