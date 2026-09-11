@@ -867,6 +867,31 @@ class MorningBrief(BasicNewsRecipe):
                 try:
                     raw = self.fetch_raw_html(url)
                 except Exception as err:
+                    # NOTE: this used to keep the article on a fetch
+                    # failure, on the theory that "couldn't check" shouldn't
+                    # block a possibly-fine article. That was fine when
+                    # Chrome fetch failures were rare and per-article, but a
+                    # real build showed the actual failure mode: the
+                    # persistent Chrome window had zero open tabs, which
+                    # broke *every* fetch identically for the whole run -
+                    # and every one of those got shipped anyway, sight
+                    # unseen, since preprocess_raw_html's own fallback is
+                    # Calibre's plain fetcher, which is exactly what's
+                    # blocked for NYT/Economist and unreliable everywhere
+                    # else (the entire reason Chrome fetching exists). When
+                    # a source needs Chrome fetching and Chrome fetching
+                    # just failed, dropping is the safe default - shipping
+                    # unverified content to the Kindle is worse than a
+                    # thinner brief. Only still keep-on-failure when Chrome
+                    # fetching isn't configured at all, where this has
+                    # always meant "Calibre's own fetch had a hiccup".
+                    if self.needs_chrome_fetch(url):
+                        self.log.warn(
+                            "Dropping (Chrome fetch failed, can't verify): "
+                            "[%s] %s (%s): %s"
+                            % (feed.title, article.title, url, err)
+                        )
+                        continue
                     self.log.warn("Quality check could not fetch %s: %s" % (url, err))
                     keep.append(article)
                     continue
