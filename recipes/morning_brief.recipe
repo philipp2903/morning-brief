@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # Morning Brief - a curated daily digest for Kindle.
 #
-# Pulls headlines from The Economist, NYT, The Guardian, Handelsblatt, ZEIT,
-# Tagesspiegel, Sportschau, ESPN, The Athletic and Quanta, asks Claude to fill each
+# Pulls headlines from The Economist, NYT, The Guardian, Tagesspiegel,
+# Sportschau, Kicker, ESPN, The Athletic and Quanta, asks Claude to fill each
 # source's quota (see READER_PROFILE) with its best available pieces,
 # downloads only those, and binds them into one periodical.
 
@@ -38,55 +38,84 @@ business, (2) sport, (3) Berlin, (4) US politics and foreign affairs,
 (5) German national politics. This is about emphasis and how strict to be
 within a category, not a quota - the per-source maximums below still cap
 each source regardless of where its category sits in this list, and German
-politics being lowest is exactly why it no longer has dedicated feeds at
-all (see HANDELSBLATT/ZEIT below): only cover it when it surfaces
-incidentally through another source's own candidates.
+politics being lowest is exactly why it has no dedicated feed of its own:
+only cover it when it surfaces incidentally through another source's own
+candidates (e.g. a Tagesspiegel piece that is really about the Berlin
+election, or an Economist/NYT piece on German politics specifically).
 
-The brief draws from ten sources, each with a fixed role and a maximum
+Reader is a paying subscriber to The Economist, The New York Times (which
+covers The Athletic), and Tagesspiegel Plus - subscription content from
+those three is fully accessible and should be used freely, not treated as
+harder to reach than the free sources. The Guardian and Quanta are the only
+free sources left in the brief; they exist to fill gaps the paid sources
+don't cover, not to compete with them - when a paid source and a free
+source both have a decent piece on the same story, prefer the paid one.
+
+Never ship a snippet or a paywall teaser as if it were the full article -
+if a source only gives a partial preview, it does not belong in the brief
+at all, regardless of how interesting the headline is.
+
+German-language sources (Tagesspiegel, Sportschau, Kicker) are for German
+and Berlin-specific stories. Do not use them as a backdoor for US or other
+non-German wire stories that happen to be translated/covered in German -
+those belong to the NYT/Economist/Guardian slots instead, in English.
+
+The brief draws from eight sources, each with a fixed role and a maximum
 slot count. Fill each source's slots with its best available pieces for
 that role - it is fine to come in under a source's maximum on a slow day,
 but do not pad a weak slot, and do not give one source more than its
 stated maximum even if another source is short that day.
 
-1. THE ECONOMIST - up to 5 slots. International economics and business
-   analysis: this is the exact voice and altitude the rest of the brief is
-   calibrated against, so hold every other source's "analysis over recap"
-   pieces to this bar.
+1. THE ECONOMIST - up to 7 slots. International economics and business
+   analysis, plus its Leaders and By Invitation opinion pieces: this is the
+   exact voice and altitude the rest of the brief is calibrated against, so
+   hold every other source's "analysis over recap" pieces to this bar.
 
-2. THE NEW YORK TIMES - up to 5 slots. US politics and business; foreign
-   affairs the US is driving. Prefer consequence over process: what a
-   decision changes, not who said what about it.
+2. THE NEW YORK TIMES - up to 6 slots. US politics and business; foreign
+   affairs the US is driving; plus its Opinion section. Prefer consequence
+   over process: what a decision changes, not who said what about it.
 
-3. THE GUARDIAN - up to 5 slots. International business and foreign
-   affairs, especially stories not already well covered by the NYT picks.
+3. THE GUARDIAN - up to 4 slots (free, supplementary). International
+   business and foreign affairs, only for stories genuinely not already
+   well covered by the paid sources' picks.
 
-4. HANDELSBLATT - up to 5 slots. German business: the German-language
-   analytical spine of the brief. Not politics - that's a low overall
-   priority here and has no dedicated feed of its own any more.
+4. TAGESSPIEGEL - up to 8 slots. The Berlin desk of the brief, and the
+   fullest slot count outside The Economist for exactly that reason: city
+   politics and elections, transport, housing, schools, business and
+   anything affecting Treptow-Koepenick and Friedrichshagen specifically,
+   plus its Meinung (opinion) section for Berlin/German commentary.
+   Strongly prefer hard, current news (an election, a corruption inquiry,
+   a transit disruption, a policy fight) over soft human-interest or
+   lifestyle features (travel diaries, personal essays, culture-page
+   filler) - a quiet news day with one real Berlin story beats five soft
+   features every time.
 
-5. ZEIT - up to 5 slots. Background and long reads: essays, reported
-   features, analysis worth twenty minutes. These need not be from today.
+5. SPORTSCHAU - up to 3 slots. German sport generally (not just football).
+   Only when the story is genuinely interesting: a manager sacked, a club
+   in financial trouble, a title race turning, a notable transfer. Never
+   routine match reports, tables or fixture previews.
 
-6. TAGESSPIEGEL - up to 5 slots. Berlin: city politics, transport, housing,
-   schools, and anything affecting Treptow-Koepenick and Friedrichshagen
-   specifically.
+6. KICKER - up to 5 slots. The primary German football source - Bundesliga
+   and football first. About 80% of this source's kept slots should be
+   football/Bundesliga; the rest can be another German sport story genuinely
+   worth a slot (this feed carries all sports, not just football, so be
+   selective). Same "genuinely interesting" bar as Sportschau: no routine
+   match reports or previews.
 
-7. SPORTSCHAU - up to 5 slots. German sport, especially football and the
-   Bundesliga. Only when the story is genuinely interesting: a manager
-   sacked, a club in financial trouble, a title race turning, a notable
-   transfer. Never routine match reports, tables or fixture previews.
+7. THE ATHLETIC - up to 7 slots. US sport (NFL, NBA, MLB), in-depth:
+   analysis and reported features, the sport-desk equivalent of the
+   long-read bar this brief holds international sources to elsewhere.
+   Prefer this over ESPN when a story has real depth to it.
 
-8. ESPN - up to 5 slots. US sport (NFL, NBA, MLB) quick news: scores,
-   trades, injuries when they actually matter. Same bar as Sportschau:
+8. ESPN - up to 2 slots. US sport (NFL, NBA, MLB) quick news: scores,
+   trades, injuries when they actually matter and The Athletic hasn't
+   already covered them in more depth. Same bar as Sportschau/Kicker:
    genuinely interesting, not routine game recaps or previews.
 
-9. THE ATHLETIC - up to 5 slots. US sport (NFL, NBA, MLB), in-depth:
-   analysis and reported features, the sport-desk equivalent of the
-   long-read bar ZEIT is held to elsewhere in this brief. Prefer this
-   over ESPN when a story has real depth to it.
+Outside the eight numbered sources above:
 
-10. QUANTA MAGAZINE - up to 2 slots. Properly substantial science or
-    mathematics background reads.
+QUANTA MAGAZINE - up to 2 slots (free). Properly substantial science or
+mathematics background reads.
 
 Never select two articles covering the same story from different outlets -
 prefer whichever single piece explains it best.
@@ -96,22 +125,21 @@ listicles, crime reporting without wider significance, and repeat coverage
 of a story already carried on a previous day.
 """
 
-# Sum of the per-source maximums above (5+5+5+5+5+5+5+5+5+2).
-MAX_ARTICLES = 47
+# Sum of the per-source maximums above (7+6+4+8+3+5+7+2+2).
+MAX_ARTICLES = 44
 
 # Enforced in code as a hard cap after Claude's selection, not just left to
 # the prompt - keys must match the "<Source> - <Section>" feed-title prefix
 # used in `feeds` below.
 SOURCE_SLOT_LIMITS = {
-    "Economist": 5,
-    "NYT": 5,
-    "Guardian": 5,
-    "Handelsblatt": 5,
-    "ZEIT": 5,
-    "Tagesspiegel": 5,
-    "Sportschau": 5,
-    "ESPN": 5,
-    "Athletic": 5,
+    "Economist": 7,
+    "NYT": 6,
+    "Guardian": 4,
+    "Tagesspiegel": 8,
+    "Sportschau": 3,
+    "Kicker": 5,
+    "Athletic": 7,
+    "ESPN": 2,
     "Quanta": 2,
 }
 
@@ -176,8 +204,8 @@ BROKEN_CONTENT_MARKERS = (
     "access denied",
     "are you a robot",
     "verify you are a human",
-    # Tagesspiegel and ZEIT paywalls: the free preview is real but partial,
-    # not broken - it still fails the "read the whole thing on Kindle" bar.
+    # Tagesspiegel's paywall: the free preview is real but partial, not
+    # broken - it still fails the "read the whole thing on Kindle" bar.
     # NOTE: bare "tagesspiegel plus" used to be here and was a real false
     # positive once logged in - Tagesspiegel's own related-links widget
     # mentions "Tagesspiegel Plus (T+)" by product name on plenty of fully
@@ -223,8 +251,7 @@ class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
     description = (
         "A curated selection from The Economist, NYT, The Guardian, "
-        "Handelsblatt, ZEIT, Tagesspiegel, Sportschau, ESPN, The Athletic "
-        "and Quanta"
+        "Tagesspiegel, Sportschau, Kicker, ESPN, The Athletic and Quanta"
     )
     __author__ = "Philipp Schett"
     publication_type = "newspaper"
@@ -291,23 +318,35 @@ class MorningBrief(BasicNewsRecipe):
         ("Economist - Business", "https://www.economist.com/business/rss.xml"),
         ("Economist - Europe", "https://www.economist.com/europe/rss.xml"),
         ("Economist - International", "https://www.economist.com/international/rss.xml"),
-        ("NYT - Home", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
+        # Opinion: the weekly leaders and guest-contributor pieces.
+        ("Economist - Leaders", "https://www.economist.com/leaders/rss.xml"),
+        ("Economist - By Invitation", "https://www.economist.com/by-invitation/rss.xml"),
         ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
         ("NYT - Politics", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"),
         ("NYT - World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
         ("NYT - Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
-        ("NYT - Magazine", "https://rss.nytimes.com/services/xml/rss/nyt/Magazine.xml"),
-        ("Handelsblatt - Top-Themen", "https://www.handelsblatt.com/contentexport/feed/top-themen"),
-        ("Handelsblatt - Unternehmen", "https://www.handelsblatt.com/contentexport/feed/unternehmen"),
-        ("Handelsblatt - Finanzen", "https://www.handelsblatt.com/contentexport/feed/finanzen"),
-        ("ZEIT - Wirtschaft", "https://newsfeed.zeit.de/wirtschaft/index"),
-        ("ZEIT - Digital", "https://newsfeed.zeit.de/digital/index"),
-        ("ZEIT - Gesellschaft", "https://newsfeed.zeit.de/gesellschaft/index"),
+        # Opinion, per the reader's own request for more of it. HomePage was
+        # dropped: it's just a mix of the other NYT section feeds already
+        # covered individually, adding volume without a distinct role.
+        ("NYT - Opinion", "https://rss.nytimes.com/services/xml/rss/nyt/Opinion.xml"),
+        # Berlin news, and Berlin-relevant opinion. "Home" used to be a feed
+        # here too, but it mixes in general entertainment/culture wire
+        # content (confirmed directly: a US politics story about Erika
+        # Kirk's statement showed up through it) that has nothing to do
+        # with Berlin - dropped in favour of just the two feeds that are
+        # actually on-topic.
         ("Tagesspiegel - Berlin", "https://www.tagesspiegel.de/contentexport/feed/berlin"),
-        ("Tagesspiegel - Home", "https://www.tagesspiegel.de/contentexport/feed/home"),
+        ("Tagesspiegel - Meinung", "https://www.tagesspiegel.de/contentexport/feed/meinung"),
         ("Sportschau - Alle Sportarten", "https://www.sportschau.de/index~rss2.xml"),
-        ("Sportschau - Bundesliga", "https://www.sportschau.de/fussball/bundesliga/index~rss2.xml"),
+        # Kicker's own site is Cloudflare/DataDome-walled like NYT/Economist
+        # (routes through the Chrome CDP fetcher, logged-in session, same as
+        # those two), but this newsfeed.kicker.de subdomain used for feed
+        # discovery is not. It's an all-sport firehose (cycling, basketball,
+        # F1 alongside Bundesliga), not football-only - there's no
+        # football-specific feed on kicker.de, so the "mostly football"
+        # split is enforced in the selection prompt, not the feed URL.
+        ("Kicker - Alle Sportarten", "https://newsfeed.kicker.de/news/aktuell"),
         ("ESPN - NFL", "https://www.espn.com/espn/rss/nfl/news"),
         ("ESPN - NBA", "https://www.espn.com/espn/rss/nba/news"),
         # theathletic.com's own domain sits behind Cloudflare like FT did;
@@ -505,11 +544,21 @@ class MorningBrief(BasicNewsRecipe):
             if parent and len(parent.get_text(strip=True)) < 40:
                 parent.decompose()
 
-        # Some sites lazy-load images via data-src/data-original and leave
-        # src empty until JS runs. remove_javascript = True means that JS
-        # never runs, so without this the image is simply missing.
+        # Some sites lazy-load images via data-src/data-original, either
+        # leaving src empty until JS runs, or (confirmed directly on The
+        # Athletic's Next.js pages) pre-filling src with a 1x1 transparent
+        # placeholder (a data: URI) that only gets swapped for the real
+        # photo by an IntersectionObserver once the image scrolls into
+        # view. fetch_via_chrome.py now scrolls the page first specifically
+        # so that swap has already happened by the time we get here, but
+        # treat a placeholder src the same as a missing one as a backstop -
+        # in case a site's lazy-load only fires on hover/click/a timer
+        # rather than on scroll, or Chrome fetching isn't configured at all
+        # (remove_javascript = True means the JS never runs in that case).
         for img in soup.find_all("img"):
-            if img.get("src"):
+            src = (img.get("src") or "").strip()
+            is_placeholder = (not src) or src.startswith("data:")
+            if not is_placeholder:
                 continue
             for attr in ("data-src", "data-original", "data-lazy-src", "data-srcset"):
                 value = img.get(attr)

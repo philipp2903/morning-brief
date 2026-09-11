@@ -57,6 +57,35 @@ EXTRACT_SCRIPT = """
 }
 """
 
+# The Athletic (and other Next.js-built sites) render every <img> with a
+# real photo URL in data-src but a 1x1 transparent placeholder already
+# sitting in src - the swap only happens client-side, via an
+# IntersectionObserver, once the image actually scrolls into view.
+# Confirmed directly on a raw fetch of a live Athletic article: every <img>
+# had src="data:image/gif;base64,..." and the real CDN URL in data-src. A
+# page that's only ever goto()'d and never scrolled never fires that
+# observer, so Readability's document.cloneNode(true) snapshot captures the
+# placeholder - which then fails the recipe's own
+# MIN_IMAGE_DIMENSION check and gets dropped, i.e. exactly the "no
+# pictures" symptom. Scrolling through the full page before extracting
+# mimics what a human reader does and lets each site's own lazy-load JS do
+# the swap for us, which is more reliable than trying to special-case every
+# site's data-src/data-original/etc. attribute naming after the fact.
+SCROLL_SCRIPT = """
+async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const step = Math.max(400, Math.floor(window.innerHeight * 0.8));
+    for (let i = 0; i < 40; i++) {
+        window.scrollBy(0, step);
+        await delay(150);
+        const atBottom = window.scrollY + window.innerHeight >= document.body.scrollHeight - 2;
+        if (atBottom) break;
+    }
+    window.scrollTo(0, 0);
+    await delay(300);
+}
+"""
+
 
 def dismiss_cookie_banner(page):
     for selector in COOKIE_CONSENT_SELECTORS:
@@ -89,6 +118,10 @@ def main():
             except Exception:
                 pass  # partial load is still usually a real page by this point
             dismiss_cookie_banner(page)
+            try:
+                page.evaluate(SCROLL_SCRIPT)
+            except Exception as err:
+                print(f"Scroll pass failed for {url} (continuing anyway): {err}", file=sys.stderr)
 
             article = None
             try:
