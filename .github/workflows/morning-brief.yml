@@ -62,7 +62,22 @@ jobs:
           # fetches into the log.
           TAB_COUNT=$(curl -sf --max-time 5 http://localhost:9333/json/list | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "unknown")
           if [ "$TAB_COUNT" = "0" ]; then
-            echo "::warning::Chrome CDP is reachable on :9333 but has zero open tabs - every article fetch will fail today (a new browser context can't be created over CDP on a real Chrome profile). Open at least one tab in the persistent Chrome window and re-run."
+            # Self-heal rather than just warn: this has happened twice in
+            # one session (Chrome's own tab-discarding behaviour under
+            # memory pressure is the leading suspect, unconfirmed) and the
+            # fix is a single CDP call - no reason to make a human do it.
+            # GET on /json/new is rejected by newer Chrome ("Using unsafe
+            # HTTP verb GET... This action supports only PUT verb" -
+            # confirmed directly); PUT is required.
+            echo "Chrome CDP has zero open tabs - opening one automatically."
+            curl -sf -X PUT --max-time 5 "http://localhost:9333/json/new?about:blank" > /dev/null
+            sleep 1
+            TAB_COUNT=$(curl -sf --max-time 5 http://localhost:9333/json/list | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "unknown")
+            if [ "$TAB_COUNT" = "0" ]; then
+              echo "::warning::Chrome CDP still has zero open tabs after trying to open one automatically - every article fetch will fail today. Check the persistent Chrome process directly (see com.morningbrief.chrome.plist) rather than just the CDP port."
+            else
+              echo "Opened a tab automatically - Chrome CDP now has $TAB_COUNT open tab(s)."
+            fi
           else
             echo "Chrome CDP reachable on :9333 with $TAB_COUNT open tab(s) - all sources will use it for fetching + extraction."
           fi
