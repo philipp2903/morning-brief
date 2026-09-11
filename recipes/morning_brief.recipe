@@ -99,8 +99,14 @@ stated maximum even if another source is short that day.
    and football first. About 80% of this source's kept slots should be
    football/Bundesliga; the rest can be another German sport story genuinely
    worth a slot (this feed carries all sports, not just football, so be
-   selective). Same "genuinely interesting" bar as Sportschau: no routine
-   match reports or previews.
+   selective). Same spirit as Sportschau - skip routine match reports,
+   tables and fixture previews - but read "genuinely interesting" a little
+   wider here, since this is the primary football source with room for
+   several picks a day, not just the single standout story: a confirmed
+   transfer or contract situation, a player's international retirement, a
+   federation/league policy or structural decision (e.g. a DFB ruling, a
+   league-format reform), or a club dispute all count, not only sackings
+   and title races.
 
 7. THE ATHLETIC - up to 7 slots. US sport (NFL, NBA, MLB), in-depth:
    analysis and reported features, the sport-desk equivalent of the
@@ -569,6 +575,71 @@ class MorningBrief(BasicNewsRecipe):
         for img in soup.find_all("img")[self.MAX_IMAGES_PER_ARTICLE:]:
             img.decompose()
 
+        # Readability keeps whatever sits structurally next to the real
+        # article body, which on some sites is a trailing wire-service
+        # byline stub, not article text - confirmed directly on a real
+        # Kicker article: the genuine text ends cleanly, then two separate
+        # one-word blocks ("pab", "DPA" - reporter initials and agency
+        # credit) follow, each in its own <div class="page">. Kindle's own
+        # page-splitter treats each of those divs as a page break, so a
+        # reader flipping past the real article lands on a screen that's
+        # just "DPA" and nothing else - reads exactly like a broken/empty
+        # article even though the real content upstream was fine. A
+        # trailing block this short (a byline is a few words at most) is
+        # never the article itself, so it's safe to drop generically
+        # rather than special-casing Kicker's markup by name.
+        MAX_TRAILING_JUNK_CHARS = 20
+        content_blocks = soup.find_all(["div", "p"], recursive=True)
+        for block in reversed(content_blocks):
+            if not block.parent:
+                continue  # already removed as part of an ancestor block
+            if block.find(["img", "a"]):
+                break  # a real (if short) figure caption/credit link, not junk
+            text = block.get_text(strip=True)
+            # Empty text doesn't break the walk - it's a wrapper div left
+            # behind by decomposing its one junk child (e.g. the outer
+            # <div> that held both "pab" and "DPA" above), safe to clear
+            # too so it doesn't linger as a stray empty block.
+            if text and len(text) > MAX_TRAILING_JUNK_CHARS:
+                break
+            block.decompose()
+
+        # The Athletic's articles are hosted on nytimes.com and some embed
+        # NYT Games' "Connections: Sports Edition" cross-promo widget
+        # directly in the article body - confirmed directly: it pulled in
+        # a heading, two teaser lines and the game's own logo image as if
+        # they were part of the article, leaving the real article's photo
+        # crowded out by a promo. Matched by its own branded heading text,
+        # which is far more stable than any CSS class name here.
+        for heading in soup.find_all(string=re.compile(r"^\s*Connections:\s*Sports Edition\s*$")):
+            container = heading.parent
+            # Walk up to the block-level ancestor that holds the whole
+            # widget (heading + teaser text + logo), not just the heading's
+            # own tag, so the teaser lines and image go with it.
+            while container and container.name not in ("div", "section", "aside") and container.parent:
+                container = container.parent
+            if container and container.name in ("div", "section", "aside"):
+                container.decompose()
+
+        return soup
+
+    def postprocess_html(self, soup, first_fetch):
+        # Calibre appends a standard "This article was downloaded by
+        # calibre from <url>" attribution line to the bottom of every
+        # single article regardless of which fetcher actually supplied the
+        # content - confirmed directly against a healthy, full-length
+        # Tagesspiegel article that this line sits on. It's not a signal
+        # that Chrome fetching was skipped, but it reads that way, so it's
+        # worth stripping rather than explaining every time. postprocess_html
+        # runs after calibre's own navbar gets inserted (unlike
+        # preprocess_html, which runs before), so this is the one hook that
+        # can actually reach it. Only the attribution <p> is removed - the
+        # surrounding "Section menu | Main menu" links stay, since those
+        # are genuinely useful for navigating the periodical on a Kindle.
+        for el in soup.find_all(string=re.compile(r"This article was downloaded by", re.IGNORECASE)):
+            parent = el.parent
+            if parent:
+                parent.decompose()
         return soup
 
     # A downloaded Handelsblatt article had 8 <img> tags but only 1 real
