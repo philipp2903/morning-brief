@@ -623,25 +623,6 @@ class MorningBrief(BasicNewsRecipe):
 
         return soup
 
-    def postprocess_html(self, soup, first_fetch):
-        # Calibre appends a standard "This article was downloaded by
-        # calibre from <url>" attribution line to the bottom of every
-        # single article regardless of which fetcher actually supplied the
-        # content - confirmed directly against a healthy, full-length
-        # Tagesspiegel article that this line sits on. It's not a signal
-        # that Chrome fetching was skipped, but it reads that way, so it's
-        # worth stripping rather than explaining every time. postprocess_html
-        # runs after calibre's own navbar gets inserted (unlike
-        # preprocess_html, which runs before), so this is the one hook that
-        # can actually reach it. Only the attribution <p> is removed - the
-        # surrounding "Section menu | Main menu" links stay, since those
-        # are genuinely useful for navigating the periodical on a Kindle.
-        for el in soup.find_all(string=re.compile(r"This article was downloaded by", re.IGNORECASE)):
-            parent = el.parent
-            if parent:
-                parent.decompose()
-        return soup
-
     # A downloaded Handelsblatt article had 8 <img> tags but only 1 real
     # photo (800x533) - the rest were a 1x1 tracking pixel and 240x135
     # "related articles" thumbnails Readability didn't exclude. The HTML
@@ -1075,3 +1056,52 @@ class MorningBrief(BasicNewsRecipe):
                     handle.write(html)
             except Exception as err:
                 self.log.warn("Could not write rewritten front page: %s" % err)
+
+        self.strip_calibre_attribution()
+
+    # Calibre appends a standard "This article was downloaded by calibre
+    # from <url>" line to the bottom of every single article, regardless of
+    # which fetcher actually supplied the content - confirmed directly
+    # against a healthy, full-length Tagesspiegel article carrying this
+    # exact line. It's not a signal that Chrome fetching was skipped, but
+    # it reads that way, so it's worth stripping.
+    #
+    # This first attempted a postprocess_html(self, soup, first_fetch)
+    # override, which looked like the right public hook - but a direct
+    # local test (adding a debug self.log.warn inside it and checking
+    # whether "downloaded by" was already in the soup at that point) proved
+    # it fires *before* calibre inserts this navbar, not after, for this
+    # calibre version - contrary to what a source-reading pass suggested.
+    # Stripping only works once the navbar actually exists, i.e. in
+    # cleanup() over the finished on-disk files, the same place the
+    # front-page link rewrite above already has to happen for the same
+    # "runs after everything is really done" reason.
+    ATTRIBUTION_RE = re.compile(
+        r"<p\b[^>]*>\s*This article was downloaded by\b.*?</p>",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    def strip_calibre_attribution(self):
+        removed = 0
+        for root, _dirs, files in os.walk(self.output_dir):
+            for name in files:
+                if not name.endswith((".html", ".xhtml")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        html = handle.read()
+                except Exception as err:
+                    self.log.warn("Could not read %s: %s" % (path, err))
+                    continue
+                new_html, count = self.ATTRIBUTION_RE.subn("", html)
+                if not count:
+                    continue
+                try:
+                    with open(path, "w", encoding="utf-8") as handle:
+                        handle.write(new_html)
+                    removed += count
+                except Exception as err:
+                    self.log.warn("Could not write %s: %s" % (path, err))
+        if removed:
+            self.log("Stripped calibre's own attribution footer from %d file(s)." % removed)
