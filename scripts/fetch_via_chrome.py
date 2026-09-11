@@ -107,7 +107,25 @@ def main():
     try:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(CDP_URL)
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            if not browser.contexts:
+                # browser.new_context() is the obvious fallback here, but it
+                # doesn't work on a real, normally-launched Chrome profile
+                # (only on a browser Playwright itself launched) - confirmed
+                # directly: it fails with "Protocol error
+                # (Browser.setDownloadBehavior): Browser context management
+                # is not supported", which took down every single article in
+                # one build. An empty browser.contexts means the persistent
+                # Chrome window has no open tabs at all right now (e.g. it
+                # got relaunched since the last successful run) - that's
+                # what actually needs fixing, not a code workaround here.
+                raise RuntimeError(
+                    "Chrome at %s has no open browser context (no tabs open). "
+                    "Open at least one tab in the persistent Chrome window "
+                    "(see com.morningbrief.chrome.plist) and try again - "
+                    "a fresh browser context can't be created on a real "
+                    "Chrome profile over CDP." % CDP_URL
+                )
+            context = browser.contexts[0]
             page = context.new_page()
             try:
                 # domcontentloaded rather than networkidle: Readability

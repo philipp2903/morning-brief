@@ -46,10 +46,25 @@ jobs:
 
       - name: Check Chrome CDP fetcher
         run: |
-          if curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
-            echo "Chrome CDP reachable on :9333 - all sources will use it for fetching + extraction."
-          else
+          if ! curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
             echo "::warning::Chrome CDP not reachable on :9333 - falls back to Calibre's own (blocked for NYT/Economist, less reliable extraction for everything else) fetcher today. See com.morningbrief.chrome.plist."
+            exit 0
+          fi
+          # Reachable isn't enough: fetch_via_chrome.py can only attach to
+          # an *existing* browser context, since creating a new one fails
+          # outright on a real (non-Playwright-launched) Chrome profile -
+          # confirmed directly, "Protocol error (Browser.setDownloadBehavior):
+          # Browser context management is not supported", which silently
+          # took down every single article fetch in one build (the CDP
+          # instance was reachable the whole time, just with zero tabs open,
+          # e.g. after the persistent Chrome window got relaunched). Catch
+          # that specific state here instead of only finding out 190 failed
+          # fetches into the log.
+          TAB_COUNT=$(curl -sf --max-time 5 http://localhost:9333/json/list | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "unknown")
+          if [ "$TAB_COUNT" = "0" ]; then
+            echo "::warning::Chrome CDP is reachable on :9333 but has zero open tabs - every article fetch will fail today (a new browser context can't be created over CDP on a real Chrome profile). Open at least one tab in the persistent Chrome window and re-run."
+          else
+            echo "Chrome CDP reachable on :9333 with $TAB_COUNT open tab(s) - all sources will use it for fetching + extraction."
           fi
 
       - name: Build the brief
