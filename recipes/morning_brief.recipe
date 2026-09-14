@@ -175,6 +175,17 @@ SENT_WINDOW_DAYS = 14
 _today_articles_file = os.environ.get("TODAY_ARTICLES_FILE", "")
 TODAY_ARTICLES_FILE = os.path.abspath(_today_articles_file) if _today_articles_file else ""
 
+# Path to write the *full* candidate pool (everything Claude chose from,
+# not just what got kept) for the workflow's "sync candidate pool to
+# feedback sheet" step - a deliberately temporary diagnostic (see
+# scripts/sheets_sync_candidates.py's docstring): a few days of "what did
+# we have vs. what got picked, and can the reader flag a miss by
+# upvoting it" while judging selection quality, then dropped once briefs
+# are consistently good, leaving only the main delivered-articles tab.
+# Optional: leave unset and this feature is simply skipped.
+_all_candidates_file = os.environ.get("ALL_CANDIDATES_FILE", "")
+ALL_CANDIDATES_FILE = os.path.abspath(_all_candidates_file) if _all_candidates_file else ""
+
 # subprocess.run([SHEETS_PYTHON, SHEETS_READ_SCRIPT]) reads back whatever
 # the reader has voted on since, for select_articles() to fold into its
 # prompt - the same "env var points at a venv Python + script" pattern
@@ -724,6 +735,36 @@ class MorningBrief(BasicNewsRecipe):
         self.log("Collected %d candidate articles." % len(candidates))
 
         keep_ids = self.select_articles(candidates)
+
+        # Temporary diagnostic dump of the full candidate pool with a
+        # Selected marker - see ALL_CANDIDATES_FILE's own comment for why
+        # this exists and when it's meant to go away. Only meaningful
+        # when a real Claude-driven selection actually happened
+        # (keep_ids is None means the ANTHROPIC_API_KEY/fallback path ran
+        # instead, which already has its own log lines to explain it).
+        if ALL_CANDIDATES_FILE and keep_ids is not None:
+            today = datetime.date.today().isoformat()
+            now = datetime.datetime.now(datetime.timezone.utc)
+            all_candidates = []
+            for index, (feed, article) in enumerate(candidates):
+                utctime = getattr(article, "utctime", None)
+                age_hours = round((now - utctime).total_seconds() / 3600, 1) if utctime else ""
+                all_candidates.append({
+                    "date": today,
+                    "source": self.source_name(feed.title),
+                    "title": article.title,
+                    "url": self.article_url(article),
+                    "age_hours": age_hours,
+                    "selected": index in keep_ids,
+                })
+            try:
+                directory = os.path.dirname(ALL_CANDIDATES_FILE)
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                with open(ALL_CANDIDATES_FILE, "w", encoding="utf-8") as handle:
+                    json.dump(all_candidates, handle, indent=1)
+            except Exception as err:
+                self.log.warn("Could not write %s: %s" % (ALL_CANDIDATES_FILE, err))
 
         if keep_ids is None:
             self.log.warn("Falling back to the first %d articles per feed."

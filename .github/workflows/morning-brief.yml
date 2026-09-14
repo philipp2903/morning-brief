@@ -97,6 +97,7 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
           SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
           TODAY_ARTICLES_FILE: ${{ github.workspace }}/state/today_articles.json
+          ALL_CANDIDATES_FILE: ${{ github.workspace }}/state/all_candidates.json
           RECIPE_VERSION: ${{ env.BUILD_VERSION }}
           CHROME_FETCH_PYTHON: ${{ vars.CHROME_FETCH_PYTHON }}
           CHROME_FETCH_SCRIPT: ${{ github.workspace }}/scripts/fetch_via_chrome.py
@@ -181,3 +182,23 @@ jobs:
             exit 0
           fi
           "${{ vars.SHEETS_PYTHON }}" scripts/sheets_sync.py state/today_articles.json
+
+      - name: Sync candidate pool to feedback sheet
+        # Deliberately NOT gated on send_email like the steps above - this
+        # is diagnostic (what did Claude have to choose from), which is
+        # meaningful for any real build, not just ones that actually got
+        # emailed. Temporary: see scripts/sheets_sync_candidates.py's own
+        # docstring for when this and the Candidates tab both go away.
+        if: success() && steps.build.outputs.built == 'true'
+        env:
+          SHEET_ID: ${{ vars.SHEET_ID }}
+        run: |
+          if [ -z "$SHEET_ID" ] || [ -z "${{ vars.SHEETS_PYTHON }}" ]; then
+            echo "SHEET_ID/SHEETS_PYTHON not configured - skipping candidate pool sync."
+            exit 0
+          fi
+          if [ ! -f state/all_candidates.json ]; then
+            echo "No all_candidates.json was produced, nothing to sync."
+            exit 0
+          fi
+          "${{ vars.SHEETS_PYTHON }}" scripts/sheets_sync_candidates.py state/all_candidates.json
