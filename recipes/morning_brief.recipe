@@ -801,6 +801,26 @@ class MorningBrief(BasicNewsRecipe):
                    " -- " + summary if summary else "")
             )
 
+        # Log the full candidate pool Claude is actually choosing from -
+        # this used to be invisible after the fact, which was a real
+        # problem: a build with 0 Economist articles and 1 Kicker article
+        # turned out to need a real investigation (a live GitHub Actions
+        # log download + grepping for "too old" skips) just to tell
+        # "there were no fresh candidates at all" (Economist, confirmed)
+        # apart from "Claude had options and passed on them" (couldn't be
+        # confirmed either way for Kicker/Tagesspiegel, because this
+        # exact list was never written anywhere). Cheap to log, expensive
+        # to reconstruct after the fact - so log it every time.
+        per_source_counts = {}
+        for feed, _article in candidates:
+            src = self.source_name(feed.title)
+            per_source_counts[src] = per_source_counts.get(src, 0) + 1
+        self.log("Candidate pool by source: %s" % ", ".join(
+            "%s=%d" % (src, count) for src, count in sorted(per_source_counts.items())
+        ))
+        for line in lines:
+            self.log("  candidate: %s" % line)
+
         # Actual reader feedback (thumbs up/down in the Sheet, voted on
         # after the fact since a Kindle can't do it inline) beats a static
         # profile description - fold in a handful of recent examples as
