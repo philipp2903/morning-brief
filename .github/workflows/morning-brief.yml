@@ -2,10 +2,10 @@ name: Morning Brief
 
 on:
   schedule:
-    # 03:00 UTC, Monday to Saturday.
+    # 03:00 UTC, every day.
     # Berlin is UTC+2 in summer and UTC+1 in winter, and GitHub can delay
     # scheduled runs under load, so this is deliberately early.
-    - cron: "0 3 * * 1-6"
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       send_email:
