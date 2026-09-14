@@ -44,6 +44,13 @@ jobs:
         run: |
           echo "BUILD_VERSION=$(date -u +%Y%m%d)-$(git rev-parse --short HEAD)-run${{ github.run_number }}" >> "$GITHUB_ENV"
 
+      - name: Write Google Sheets credentials
+        run: |
+          # $RUNNER_TEMP rather than the repo workspace, so this can never
+          # accidentally end up committed - it's wiped after the job anyway.
+          echo '${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}' > "$RUNNER_TEMP/google-sheets-credentials.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/google-sheets-credentials.json" >> "$GITHUB_ENV"
+
       - name: Check Chrome CDP fetcher
         run: |
           if ! curl -sf --max-time 5 http://localhost:9333/json/version > /dev/null; then
@@ -89,9 +96,13 @@ jobs:
           GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
           SENT_URLS_FILE: ${{ github.workspace }}/state/sent.json
+          TODAY_ARTICLES_FILE: ${{ github.workspace }}/state/today_articles.json
           RECIPE_VERSION: ${{ env.BUILD_VERSION }}
           CHROME_FETCH_PYTHON: ${{ vars.CHROME_FETCH_PYTHON }}
           CHROME_FETCH_SCRIPT: ${{ github.workspace }}/scripts/fetch_via_chrome.py
+          SHEETS_PYTHON: ${{ vars.SHEETS_PYTHON }}
+          SHEETS_READ_SCRIPT: ${{ github.workspace }}/scripts/read_votes.py
+          SHEET_ID: ${{ vars.SHEET_ID }}
           QT_QPA_PLATFORM: offscreen
         run: |
           set -o pipefail
@@ -155,3 +166,18 @@ jobs:
           git diff --quiet --cached && exit 0
           git commit -m "chore: articles delivered $(date +%F)"
           git push
+
+      - name: Sync today's articles to the feedback sheet
+        if: success() && steps.build.outputs.built == 'true' && (github.event_name != 'workflow_dispatch' || inputs.send_email)
+        env:
+          SHEET_ID: ${{ vars.SHEET_ID }}
+        run: |
+          if [ -z "$SHEET_ID" ] || [ -z "${{ vars.SHEETS_PYTHON }}" ]; then
+            echo "SHEET_ID/SHEETS_PYTHON not configured - skipping feedback sheet sync."
+            exit 0
+          fi
+          if [ ! -f state/today_articles.json ]; then
+            echo "No today_articles.json was produced, nothing to sync."
+            exit 0
+          fi
+          "${{ vars.SHEETS_PYTHON }}" scripts/sheets_sync.py state/today_articles.json

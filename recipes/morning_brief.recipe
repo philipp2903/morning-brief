@@ -166,6 +166,24 @@ _sent_urls_file = os.environ.get("SENT_URLS_FILE", "")
 SENT_URLS_FILE = os.path.abspath(_sent_urls_file) if _sent_urls_file else ""
 SENT_WINDOW_DAYS = 14
 
+# Path to write today's delivered-article list (date/source/title/url) for
+# the workflow's own "sync to the feedback sheet" step to pick up - a
+# Kindle Paperwhite has no browser or mail client, so voting can't happen
+# inline in the periodical; it happens later, on the reader's phone, via
+# a Google Sheet (see scripts/sheets_sync.py and scripts/read_votes.py).
+# Optional: leave unset and this feature is simply skipped.
+_today_articles_file = os.environ.get("TODAY_ARTICLES_FILE", "")
+TODAY_ARTICLES_FILE = os.path.abspath(_today_articles_file) if _today_articles_file else ""
+
+# subprocess.run([SHEETS_PYTHON, SHEETS_READ_SCRIPT]) reads back whatever
+# the reader has voted on since, for select_articles() to fold into its
+# prompt - the same "env var points at a venv Python + script" pattern
+# already used for CHROME_FETCH_PYTHON/CHROME_FETCH_SCRIPT, and for the
+# same reason: this needs gspread/google-auth, which calibre's own bundled
+# Python doesn't have and isn't a supported place to add packages to.
+SHEETS_PYTHON = os.environ.get("SHEETS_PYTHON", "")
+SHEETS_READ_SCRIPT = os.environ.get("SHEETS_READ_SCRIPT", "")
+
 # Build identifier, stamped into the periodical so a given brief can be
 # traced back to the recipe version that produced it. Set by the workflow;
 # falls back to something recognisable for local runs.
@@ -737,6 +755,24 @@ class MorningBrief(BasicNewsRecipe):
         self._final_feeds = surviving
         return surviving
 
+    def fetch_vote_feedback(self):
+        """{"liked": [...], "disliked": [...]} from the Google Sheet the
+        reader votes in (see read_votes.py) - or None if that isn't
+        configured. A missing/broken feedback signal should never stop a
+        build, so this only ever warns, never raises.
+        """
+        if not SHEETS_PYTHON or not SHEETS_READ_SCRIPT:
+            return None
+        try:
+            result = subprocess.run(
+                [SHEETS_PYTHON, SHEETS_READ_SCRIPT],
+                capture_output=True, timeout=30,
+            )
+            return json.loads(result.stdout.decode("utf-8", "replace"))
+        except Exception as err:
+            self.log.warn("Could not read vote feedback: %s" % err)
+            return None
+
     def select_articles(self, candidates):
         """Return a set of indices to keep, or None to trigger the fallback."""
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -765,8 +801,33 @@ class MorningBrief(BasicNewsRecipe):
                    " -- " + summary if summary else "")
             )
 
+        # Actual reader feedback (thumbs up/down in the Sheet, voted on
+        # after the fact since a Kindle can't do it inline) beats a static
+        # profile description - fold in a handful of recent examples as
+        # taste calibration rather than trying to build a separate scoring
+        # system on top of what's already an LLM-judgment-driven pipeline.
+        feedback = self.fetch_vote_feedback()
+        feedback_block = ""
+        if feedback and (feedback.get("liked") or feedback.get("disliked")):
+            parts = []
+            if feedback.get("liked"):
+                parts.append(
+                    "The reader has previously UPVOTED pieces like these "
+                    "(lean toward more like this, all else equal):\n" +
+                    "\n".join("  - [%s] %s" % (a.get("source", ""), a.get("title", ""))
+                               for a in feedback["liked"])
+                )
+            if feedback.get("disliked"):
+                parts.append(
+                    "The reader has previously DOWNVOTED pieces like these "
+                    "(lean away from more like this):\n" +
+                    "\n".join("  - [%s] %s" % (a.get("source", ""), a.get("title", ""))
+                               for a in feedback["disliked"])
+                )
+            feedback_block = "\n\nREADER FEEDBACK\n" + "\n\n".join(parts)
+
         prompt = (
-            "READER PROFILE\n%s\n\n"
+            "READER PROFILE\n%s%s\n\n"
             "It is currently %s.\n"
             "Select at most %d articles. Each candidate's age is in "
             "parentheses. Strongly prefer the freshest candidate on a given "
@@ -777,7 +838,8 @@ class MorningBrief(BasicNewsRecipe):
             "is genuine background/long-read pieces, which are timeless by "
             "design and where a candidate's age is not a mark against it.\n\n"
             "CANDIDATES\n%s"
-            % (READER_PROFILE.strip(), now.strftime("%A, %Y-%m-%d %H:%M UTC"),
+            % (READER_PROFILE.strip(), feedback_block,
+               now.strftime("%A, %Y-%m-%d %H:%M UTC"),
                MAX_ARTICLES, "\n".join(lines))
         )
 
@@ -983,22 +1045,48 @@ class MorningBrief(BasicNewsRecipe):
         return pruned
 
     def save_history(self, history, feeds):
-        if not SENT_URLS_FILE:
-            return
         today = datetime.date.today().isoformat()
-        for feed in feeds:
-            for article in feed.articles:
-                url = self.article_url(article)
-                if url:
-                    history[url] = today
-        try:
-            directory = os.path.dirname(SENT_URLS_FILE)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(SENT_URLS_FILE, "w", encoding="utf-8") as handle:
-                json.dump(history, handle, indent=1, sort_keys=True)
-        except Exception as err:
-            self.log.warn("Could not write %s: %s" % (SENT_URLS_FILE, err))
+
+        if SENT_URLS_FILE:
+            for feed in feeds:
+                for article in feed.articles:
+                    url = self.article_url(article)
+                    if url:
+                        history[url] = today
+            try:
+                directory = os.path.dirname(SENT_URLS_FILE)
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                with open(SENT_URLS_FILE, "w", encoding="utf-8") as handle:
+                    json.dump(history, handle, indent=1, sort_keys=True)
+            except Exception as err:
+                self.log.warn("Could not write %s: %s" % (SENT_URLS_FILE, err))
+
+        # For the workflow's own "sync today's articles to the feedback
+        # sheet" step - a separate file (not SENT_URLS_FILE) since that one
+        # accumulates a 14-day rolling history keyed by URL, while this one
+        # only ever needs today's list with the source/title the sheet
+        # actually wants to show a human.
+        if TODAY_ARTICLES_FILE:
+            todays_articles = [
+                {
+                    "date": today,
+                    "source": self.source_name(feed.title),
+                    "title": article.title,
+                    "url": self.article_url(article),
+                }
+                for feed in feeds
+                for article in feed.articles
+                if self.article_url(article)
+            ]
+            try:
+                directory = os.path.dirname(TODAY_ARTICLES_FILE)
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                with open(TODAY_ARTICLES_FILE, "w", encoding="utf-8") as handle:
+                    json.dump(todays_articles, handle, indent=1)
+            except Exception as err:
+                self.log.warn("Could not write %s: %s" % (TODAY_ARTICLES_FILE, err))
 
     # -- front page -------------------------------------------------------
 
