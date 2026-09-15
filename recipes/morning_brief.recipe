@@ -60,13 +60,17 @@ and Berlin-specific stories. Do not use them as a backdoor for US or other
 non-German wire stories that happen to be translated/covered in German -
 those belong to the NYT/Economist/Guardian slots instead, in English.
 
-The brief draws from eight sources, each with a fixed role and a maximum
-slot count. Fill each source's slots with its best available pieces for
-that role - it is fine to come in under a source's maximum on a slow day,
-but do not pad a weak slot, and do not give one source more than its
-stated maximum even if another source is short that day.
+The brief draws from eight sources, each with a fixed role and a slot
+count. Treat that count as a target to fill, not just a ceiling: with
+pools this size, there are enough genuinely interesting candidates most
+days, so fill each source's slots with its best available pieces for
+that role. Only leave a slot unfilled if that source's entire pool is
+genuinely weak that specific day - don't pad with routine filler just to
+hit the number, but don't leave slots empty out of excess caution either.
+Never give one source more than its stated maximum even if another
+source is short that day.
 
-1. THE ECONOMIST - up to 7 slots. International economics and business
+1. THE ECONOMIST - up to 5 slots. International economics and business
    analysis, plus its Leaders and By Invitation opinion pieces: this is the
    exact voice and altitude the rest of the brief is calibrated against, so
    hold every other source's "analysis over recap" pieces to this bar.
@@ -79,7 +83,7 @@ stated maximum even if another source is short that day.
    business and foreign affairs, only for stories genuinely not already
    well covered by the paid sources' picks.
 
-4. TAGESSPIEGEL - up to 8 slots. The Berlin desk of the brief, and the
+4. TAGESSPIEGEL - up to 6 slots. The Berlin desk of the brief, and the
    fullest slot count outside The Economist for exactly that reason: city
    politics and elections, transport, housing, schools, business and
    anything affecting Treptow-Koepenick and Friedrichshagen specifically,
@@ -108,7 +112,7 @@ stated maximum even if another source is short that day.
    league-format reform), or a club dispute all count, not only sackings
    and title races.
 
-7. THE ATHLETIC - up to 7 slots. US sport (NFL, NBA, MLB), in-depth:
+7. THE ATHLETIC - up to 5 slots. US sport (NFL, NBA, MLB), in-depth:
    analysis and reported features, the sport-desk equivalent of the
    long-read bar this brief holds international sources to elsewhere.
    Prefer this over ESPN when a story has real depth to it.
@@ -131,20 +135,20 @@ listicles, crime reporting without wider significance, and repeat coverage
 of a story already carried on a previous day.
 """
 
-# Sum of the per-source maximums above (7+6+4+8+3+5+7+2+2).
-MAX_ARTICLES = 44
+# Sum of the per-source maximums above (5+6+4+6+3+5+5+2+2).
+MAX_ARTICLES = 38
 
 # Enforced in code as a hard cap after Claude's selection, not just left to
 # the prompt - keys must match the "<Source> - <Section>" feed-title prefix
 # used in `feeds` below.
 SOURCE_SLOT_LIMITS = {
-    "Economist": 7,
+    "Economist": 5,
     "NYT": 6,
     "Guardian": 4,
-    "Tagesspiegel": 8,
+    "Tagesspiegel": 6,
     "Sportschau": 3,
     "Kicker": 5,
-    "Athletic": 7,
+    "Athletic": 5,
     "ESPN": 2,
     "Quanta": 2,
 }
@@ -270,11 +274,17 @@ and maximum slot count. Fill each source's slots with its best available \
 candidates for that source's stated role.
 
 Rules:
-- Each source's slot count is a MAXIMUM, not a target: it is fine to use
-  fewer of a source's slots on a slow day, but never more than its stated
-  maximum, and never reassign one source's unused slots to another source.
-- Favour substance over volume. Prefer one strong analysis over three thin
-  updates on the same event.
+- Each source's slot count is a target to actually fill, not just a
+  ceiling. Assume there are enough genuinely interesting candidates most
+  days - a pool of a dozen or more candidates for a source almost always
+  has enough good ones to fill its slots. Only leave a slot unfilled if
+  that specific source's entire pool is genuinely weak today. Never
+  exceed the stated maximum, and never reassign one source's unused
+  slots to another source.
+- Within that, favour substance over volume: prefer one strong analysis
+  over three thin updates on the same event, but that's about which
+  candidates to pick within a source's pool, not a reason to leave slots
+  empty when good candidates exist.
 - Never select two articles covering the same story from different outlets.
 - Answer with JSON only, no prose and no code fences, in exactly this shape:
   {"keep": [3, 11, 24]}
