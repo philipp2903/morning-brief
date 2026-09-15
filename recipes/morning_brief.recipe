@@ -3,7 +3,7 @@
 #
 # Pulls headlines from The Economist, NYT, The Guardian, Tagesspiegel,
 # Sportschau, Kicker, ESPN, The Athletic and Quanta, asks Claude to fill each
-# source's quota (see READER_PROFILE) with its best available pieces,
+# source's quota (see SOURCE_ROLES) with its best available pieces,
 # downloads only those, and binds them into one periodical.
 
 import calendar
@@ -24,32 +24,31 @@ from calibre.web.feeds.news import BasicNewsRecipe
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
-# What "relevant" means. Edit freely - this is the steering wheel.
-READER_PROFILE = """
+# Shared context sent with EVERY per-source selection call (see
+# SOURCE_ROLES and select_articles below for why selection is per-source
+# rather than one big call across all candidates). Edit freely - this is
+# the steering wheel for anything that isn't a specific source's own role.
+READER_CONTEXT = """
 Berlin-based founder and consultant. Runs a small consulting practice focused
 on AI adoption and operating cadence in enterprises, with clients in Germany
 and internationally. Reads The Economist regularly and wants analysis over
 recap: pieces that explain a mechanism or a consequence, not just report a
 number or an event.
 
-Overall priority, highest first, when judging how much a category deserves
-strong picks versus a weaker slot going unfilled: (1) economics and
-business, (2) sport, (3) Berlin, (4) US politics and foreign affairs,
-(5) German national politics. This is about emphasis and how strict to be
-within a category, not a quota - the per-source maximums below still cap
-each source regardless of where its category sits in this list, and German
-politics being lowest is exactly why it has no dedicated feed of its own:
-only cover it when it surfaces incidentally through another source's own
-candidates (e.g. a Tagesspiegel piece that is really about the Berlin
-election, or an Economist/NYT piece on German politics specifically).
+Overall priority, highest first, for how strict to be within a category:
+(1) economics and business, (2) sport, (3) Berlin, (4) US politics and
+foreign affairs, (5) German national politics. German politics has no
+dedicated source of its own - only cover it when it surfaces incidentally
+through another source's own candidates (e.g. a Tagesspiegel piece that is
+really about the Berlin election, or an Economist/NYT piece on German
+politics specifically).
 
 Reader is a paying subscriber to The Economist, The New York Times (which
 covers The Athletic), and Tagesspiegel Plus - subscription content from
 those three is fully accessible and should be used freely, not treated as
 harder to reach than the free sources. The Guardian and Quanta are the only
 free sources left in the brief; they exist to fill gaps the paid sources
-don't cover, not to compete with them - when a paid source and a free
-source both have a decent piece on the same story, prefer the paid one.
+don't cover, not to compete with them.
 
 Never ship a snippet or a paywall teaser as if it were the full article -
 if a source only gives a partial preview, it does not belong in the brief
@@ -60,98 +59,89 @@ and Berlin-specific stories. Do not use them as a backdoor for US or other
 non-German wire stories that happen to be translated/covered in German -
 those belong to the NYT/Economist/Guardian slots instead, in English.
 
-The brief draws from eight sources, each with a fixed role and a slot
-count. Treat that count as a target to fill, not just a ceiling: with
-pools this size, there are enough genuinely interesting candidates most
-days, so fill each source's slots with its best available pieces for
-that role. Only leave a slot unfilled if that source's entire pool is
-genuinely weak that specific day - don't pad with routine filler just to
-hit the number, but don't leave slots empty out of excess caution either.
-Never give one source more than its stated maximum even if another
-source is short that day.
-
-1. THE ECONOMIST - up to 5 slots. International economics and business
-   analysis, plus its Leaders and By Invitation opinion pieces: this is the
-   exact voice and altitude the rest of the brief is calibrated against, so
-   hold every other source's "analysis over recap" pieces to this bar.
-
-2. THE NEW YORK TIMES - up to 6 slots. US politics and business; foreign
-   affairs the US is driving; plus its Opinion section. Prefer consequence
-   over process: what a decision changes, not who said what about it.
-
-3. THE GUARDIAN - up to 4 slots (free, supplementary). International
-   business and foreign affairs, only for stories genuinely not already
-   well covered by the paid sources' picks.
-
-4. TAGESSPIEGEL - up to 6 slots. The Berlin desk of the brief, and the
-   fullest slot count outside The Economist for exactly that reason: city
-   politics and elections, transport, housing, schools, business and
-   anything affecting Treptow-Koepenick and Friedrichshagen specifically,
-   plus its Meinung (opinion) section for Berlin/German commentary.
-   Strongly prefer hard, current news (an election, a corruption inquiry,
-   a transit disruption, a policy fight) over soft human-interest or
-   lifestyle features (travel diaries, personal essays, culture-page
-   filler) - a quiet news day with one real Berlin story beats five soft
-   features every time.
-
-5. SPORTSCHAU - up to 3 slots. German sport generally (not just football).
-   Only when the story is genuinely interesting: a manager sacked, a club
-   in financial trouble, a title race turning, a notable transfer. Never
-   routine match reports, tables or fixture previews.
-
-6. KICKER - up to 5 slots. The primary German football source - Bundesliga
-   and football first. About 80% of this source's kept slots should be
-   football/Bundesliga; the rest can be another German sport story genuinely
-   worth a slot (this feed carries all sports, not just football, so be
-   selective). Same spirit as Sportschau - skip routine match reports,
-   tables and fixture previews - but read "genuinely interesting" a little
-   wider here, since this is the primary football source with room for
-   several picks a day, not just the single standout story: a confirmed
-   transfer or contract situation, a player's international retirement, a
-   federation/league policy or structural decision (e.g. a DFB ruling, a
-   league-format reform), or a club dispute all count, not only sackings
-   and title races.
-
-7. THE ATHLETIC - up to 5 slots. US sport (NFL, NBA, MLB), in-depth:
-   analysis and reported features, the sport-desk equivalent of the
-   long-read bar this brief holds international sources to elsewhere.
-   Prefer this over ESPN when a story has real depth to it.
-
-8. ESPN - up to 2 slots. US sport (NFL, NBA, MLB) quick news: scores,
-   trades, injuries when they actually matter and The Athletic hasn't
-   already covered them in more depth. Same bar as Sportschau/Kicker:
-   genuinely interesting, not routine game recaps or previews.
-
-Outside the eight numbered sources above:
-
-QUANTA MAGAZINE - up to 2 slots (free). Properly substantial science or
-mathematics background reads.
-
-Never select two articles covering the same story from different outlets -
-prefer whichever single piece explains it best.
-
 Not wanted at all: celebrity and royals, lifestyle and wellness, horoscopes,
 listicles, crime reporting without wider significance, and repeat coverage
 of a story already carried on a previous day.
 """
 
-# Sum of the per-source maximums above (5+6+4+6+3+5+5+2+2).
-MAX_ARTICLES = 38
-
-# Enforced in code as a hard cap after Claude's selection, not just left to
-# the prompt - keys must match the "<Source> - <Section>" feed-title prefix
-# used in `feeds` below.
-SOURCE_SLOT_LIMITS = {
-    "Economist": 5,
-    "NYT": 6,
-    "Guardian": 4,
-    "Tagesspiegel": 6,
-    "Sportschau": 3,
-    "Kicker": 5,
-    "Athletic": 5,
-    "ESPN": 2,
-    "Quanta": 2,
+# Each source's role, and its slot count - both are the single source of
+# truth (SOURCE_SLOT_LIMITS and MAX_ARTICLES below are derived from this,
+# not maintained separately). Dict order IS priority order: select_articles
+# runs sources in this order and tells each later source what's already
+# been picked, so e.g. Guardian (after the paid sources) and ESPN (after
+# The Athletic) can actually avoid duplicating a story instead of just
+# being told to in the abstract.
+#
+# This used to be one giant prompt with all ~200 candidates across all 9
+# sources at once - real production data showed that badly under-filled
+# almost every source regardless of how the "fill your slots" instruction
+# was worded (confirmed directly: Kicker had 19 candidates - including an
+# actual Bundesliga manager sacking - and Guardian had 18, yet only 1 got
+# kept from each, two days running, even after rewriting the instruction
+# to explicitly push against under-filling). Asking one call to weigh ~200
+# candidates across 9 sources and hit 9 separate quotas at once was
+# apparently too much to ask reliably. One focused call per source, each
+# only weighing its own pool against its own quota, is the actual fix.
+SOURCE_ROLES = {
+    "Economist": (5,
+        "International economics and business analysis, plus its Leaders "
+        "and By Invitation opinion pieces: this is the exact voice and "
+        "altitude the rest of the brief is calibrated against, so hold "
+        "every other source's \"analysis over recap\" pieces to this bar."),
+    "NYT": (6,
+        "US politics and business; foreign affairs the US is driving; "
+        "plus its Opinion section. Prefer consequence over process: what "
+        "a decision changes, not who said what about it."),
+    "Guardian": (4,
+        "International business and foreign affairs (free, supplementary) "
+        "- only for stories genuinely not already well covered by what's "
+        "already been selected from the paid sources today (see ALREADY "
+        "SELECTED)."),
+    "Tagesspiegel": (6,
+        "The Berlin desk of the brief, and the fullest slot count outside "
+        "The Economist for exactly that reason: city politics and "
+        "elections, transport, housing, schools, business and anything "
+        "affecting Treptow-Koepenick and Friedrichshagen specifically, "
+        "plus its Meinung (opinion) section for Berlin/German commentary. "
+        "Strongly prefer hard, current news (an election, a corruption "
+        "inquiry, a transit disruption, a policy fight) over soft "
+        "human-interest or lifestyle features (travel diaries, personal "
+        "essays, culture-page filler) - a quiet news day with one real "
+        "Berlin story beats five soft features every time."),
+    "Sportschau": (3,
+        "German sport generally (not just football). Only when the story "
+        "is genuinely interesting: a manager sacked, a club in financial "
+        "trouble, a title race turning, a notable transfer. Never routine "
+        "match reports, tables or fixture previews."),
+    "Kicker": (5,
+        "The primary German football source - Bundesliga and football "
+        "first. About 80% of kept slots should be football/Bundesliga; "
+        "the rest can be another German sport story genuinely worth a "
+        "slot (this feed carries all sports, not just football, so be "
+        "selective). Same spirit as Sportschau - skip routine match "
+        "reports, tables and fixture previews - but read \"genuinely "
+        "interesting\" a little wider here, since this is the primary "
+        "football source with room for several picks a day, not just the "
+        "single standout story: a confirmed transfer or contract "
+        "situation, a player's international retirement, a "
+        "federation/league policy or structural decision (e.g. a DFB "
+        "ruling, a league-format reform), or a club dispute all count, "
+        "not only sackings and title races."),
+    "Athletic": (5,
+        "US sport (NFL, NBA, MLB), in-depth: analysis and reported "
+        "features, the sport-desk equivalent of the long-read bar this "
+        "brief holds international sources to elsewhere."),
+    "ESPN": (2,
+        "US sport (NFL, NBA, MLB) quick news: scores, trades, injuries "
+        "when they actually matter and The Athletic hasn't already "
+        "covered them in more depth (see ALREADY SELECTED). Same bar as "
+        "Sportschau/Kicker: genuinely interesting, not routine game "
+        "recaps or previews."),
+    "Quanta": (2, "Properly substantial science or mathematics background reads (free)."),
 }
+
+SOURCE_SLOT_LIMITS = {name: cap for name, (cap, _role) in SOURCE_ROLES.items()}
+MAX_ARTICLES = sum(SOURCE_SLOT_LIMITS.values())
 
 # If Claude cannot be reached, keep this many articles per feed instead.
 # Low, because there are now ~5 feeds per source - the fallback is a rough
@@ -268,24 +258,25 @@ BROKEN_CONTENT_MARKERS = (
 MIN_ARTICLE_CHARS = 500
 
 SELECTION_SYSTEM_PROMPT = """You are the editor of a personal morning \
-newspaper. You are given today's candidate articles (each labelled with its \
-source) and a profile of the single reader that states each source's role \
-and maximum slot count. Fill each source's slots with its best available \
-candidates for that source's stated role.
+newspaper, currently filling the slots for ONE specific source in today's \
+edition. You are given the reader's general context, this source's own \
+role and slot count, what's already been selected from other sources \
+today (if any), and this source's own candidate articles.
 
 Rules:
-- Each source's slot count is a target to actually fill, not just a
-  ceiling. Assume there are enough genuinely interesting candidates most
-  days - a pool of a dozen or more candidates for a source almost always
-  has enough good ones to fill its slots. Only leave a slot unfilled if
-  that specific source's entire pool is genuinely weak today. Never
-  exceed the stated maximum, and never reassign one source's unused
-  slots to another source.
-- Within that, favour substance over volume: prefer one strong analysis
-  over three thin updates on the same event, but that's about which
-  candidates to pick within a source's pool, not a reason to leave slots
-  empty when good candidates exist.
-- Never select two articles covering the same story from different outlets.
+- The slot count is a target to actually fill, not just a ceiling. Assume
+  there are enough genuinely interesting candidates most days - a pool of
+  a dozen or more almost always has enough good ones to fill every slot.
+  Only leave a slot unfilled if this source's entire pool is genuinely
+  weak today. Never exceed the stated maximum.
+- Within that, favour substance over volume: prefer one strong piece over
+  several thin updates on the same event, but that's about which
+  candidates to pick, not a reason to leave slots empty when good
+  candidates exist.
+- Never pick a candidate that covers the same story as something already
+  selected from another source today (see ALREADY SELECTED) - prefer
+  whichever single piece explains it best, and that's usually the one
+  already picked, since it was selected first.
 - Answer with JSON only, no prose and no code fences, in exactly this shape:
   {"keep": [3, 11, 24]}
   where the numbers are the candidate ids you are keeping, most important
@@ -825,7 +816,12 @@ class MorningBrief(BasicNewsRecipe):
             return None
 
     def select_articles(self, candidates):
-        """Return a set of indices to keep, or None to trigger the fallback."""
+        """Return a set of indices to keep, or None to trigger the fallback.
+
+        One Claude call per source (see SOURCE_ROLES for why), run in
+        priority order, each told what's already been picked from earlier
+        sources so it can avoid duplicating a story.
+        """
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             self.log.warn("ANTHROPIC_API_KEY is not set.")
@@ -837,7 +833,8 @@ class MorningBrief(BasicNewsRecipe):
         # iPhone launch" preview got selected for a brief delivered the day
         # *after* that launch already happened.
         now = datetime.datetime.now(datetime.timezone.utc)
-        lines = []
+        lines_by_index = {}
+        indices_by_source = {}
         for index, (feed, article) in enumerate(candidates):
             summary = (getattr(article, "summary", "") or "").strip()
             summary = " ".join(summary.split())[:240]
@@ -846,11 +843,13 @@ class MorningBrief(BasicNewsRecipe):
             if utctime is not None:
                 hours_old = (now - utctime).total_seconds() / 3600
                 age = " (%.0fh old)" % hours_old
-            lines.append(
+            lines_by_index[index] = (
                 "%d | %s | %s%s%s"
                 % (index, feed.title, article.title, age,
                    " -- " + summary if summary else "")
             )
+            source = self.source_name(feed.title)
+            indices_by_source.setdefault(source, []).append(index)
 
         # Log the full candidate pool Claude is actually choosing from -
         # this used to be invisible after the fact, which was a real
@@ -858,25 +857,24 @@ class MorningBrief(BasicNewsRecipe):
         # turned out to need a real investigation (a live GitHub Actions
         # log download + grepping for "too old" skips) just to tell
         # "there were no fresh candidates at all" (Economist, confirmed)
-        # apart from "Claude had options and passed on them" (couldn't be
-        # confirmed either way for Kicker/Tagesspiegel, because this
-        # exact list was never written anywhere). Cheap to log, expensive
-        # to reconstruct after the fact - so log it every time.
-        per_source_counts = {}
-        for feed, _article in candidates:
-            src = self.source_name(feed.title)
-            per_source_counts[src] = per_source_counts.get(src, 0) + 1
+        # apart from "Claude had options and passed on them" (which turned
+        # out to be exactly what was happening for Kicker/Guardian, two
+        # days running - see SOURCE_ROLES for the fix that came out of
+        # this). Cheap to log, expensive to reconstruct after the fact -
+        # so log it every time.
         self.log("Candidate pool by source: %s" % ", ".join(
-            "%s=%d" % (src, count) for src, count in sorted(per_source_counts.items())
+            "%s=%d" % (src, len(idxs)) for src, idxs in sorted(indices_by_source.items())
         ))
-        for line in lines:
-            self.log("  candidate: %s" % line)
+        for index in sorted(lines_by_index):
+            self.log("  candidate: %s" % lines_by_index[index])
 
         # Actual reader feedback (thumbs up/down in the Sheet, voted on
         # after the fact since a Kindle can't do it inline) beats a static
         # profile description - fold in a handful of recent examples as
         # taste calibration rather than trying to build a separate scoring
         # system on top of what's already an LLM-judgment-driven pipeline.
+        # Fetched once and reused across every per-source call below - it's
+        # general taste context, not specific to any one source.
         feedback = self.fetch_vote_feedback()
         feedback_block = ""
         if feedback and (feedback.get("liked") or feedback.get("disliked")):
@@ -897,74 +895,90 @@ class MorningBrief(BasicNewsRecipe):
                 )
             feedback_block = "\n\nREADER FEEDBACK\n" + "\n\n".join(parts)
 
-        prompt = (
-            "READER PROFILE\n%s%s\n\n"
-            "It is currently %s.\n"
-            "Select at most %d articles. Each candidate's age is in "
-            "parentheses. Strongly prefer the freshest candidate on a given "
-            "story - never select one about an event that has, by its age, "
-            "likely already happened or already been superseded by a newer "
-            "development (e.g. a 2-day-old \"X will happen tomorrow\" "
-            "preview once X has probably already occurred). The exception "
-            "is genuine background/long-read pieces, which are timeless by "
-            "design and where a candidate's age is not a mark against it.\n\n"
-            "CANDIDATES\n%s"
-            % (READER_PROFILE.strip(), feedback_block,
-               now.strftime("%A, %Y-%m-%d %H:%M UTC"),
-               MAX_ARTICLES, "\n".join(lines))
-        )
+        final_ids = set()
+        already_picked_lines = []
+        any_call_succeeded = False
 
-        try:
-            raw = self.call_claude(api_key, prompt)
-        except Exception as err:
-            self.log.error("Claude selection failed: %s" % err)
-            return None
+        for source, (cap, role) in SOURCE_ROLES.items():
+            indices = indices_by_source.get(source)
+            if not indices:
+                continue
 
-        try:
-            cleaned = raw.strip().strip("`")
-            if cleaned.lower().startswith("json"):
-                cleaned = cleaned[4:]
-            keep = json.loads(cleaned)["keep"]
-        except Exception as err:
-            self.log.error("Could not parse selection response: %s" % err)
-            self.log.error("Raw response was: %r" % raw)
-            return None
+            already_block = (
+                "\n\nALREADY SELECTED TODAY (don't duplicate these stories):\n"
+                + "\n".join(already_picked_lines)
+                if already_picked_lines else ""
+            )
+            prompt = (
+                "READER CONTEXT\n%s%s\n\n"
+                "TODAY'S SOURCE: %s - up to %d slots. %s%s\n\n"
+                "It is currently %s.\n"
+                "Select at most %d articles. Each candidate's age is in "
+                "parentheses. Strongly prefer the freshest candidate on a "
+                "given story - never select one about an event that has, "
+                "by its age, likely already happened or already been "
+                "superseded by a newer development (e.g. a 2-day-old "
+                "\"X will happen tomorrow\" preview once X has probably "
+                "already occurred). The exception is genuine "
+                "background/long-read pieces, which are timeless by "
+                "design and where a candidate's age is not a mark against "
+                "it.\n\n"
+                "CANDIDATES\n%s"
+                % (READER_CONTEXT.strip(), feedback_block,
+                   source, cap, role, already_block,
+                   now.strftime("%A, %Y-%m-%d %H:%M UTC"), cap,
+                   "\n".join(lines_by_index[i] for i in indices))
+            )
 
-        # Preserve Claude's priority order (its rules ask for "most
-        # important first") so the per-source cap below keeps each
-        # source's best picks, not an arbitrary subset.
-        ordered_ids = []
-        seen = set()
-        for i in keep:
             try:
-                i = int(i)
-            except (TypeError, ValueError):
+                raw = self.call_claude(api_key, prompt)
+            except Exception as err:
+                self.log.error("Claude selection failed for %s: %s" % (source, err))
                 continue
-            if 0 <= i < len(candidates) and i not in seen:
-                ordered_ids.append(i)
-                seen.add(i)
+            # The API itself is reachable/responding from this point on -
+            # that's the meaningful signal for "trust the partial results"
+            # vs. "the whole thing is down, fall back" below, regardless of
+            # whether this specific source's response also parses cleanly.
+            any_call_succeeded = True
 
-        if not ordered_ids:
-            self.log.warn("Claude selected nothing.")
+            try:
+                cleaned = raw.strip().strip("`")
+                if cleaned.lower().startswith("json"):
+                    cleaned = cleaned[4:]
+                keep = json.loads(cleaned)["keep"]
+            except Exception as err:
+                self.log.error("Could not parse selection response for %s: %s" % (source, err))
+                self.log.error("Raw response was: %r" % raw)
+                continue
+
+            valid_indices = set(indices)
+            kept_this_source = []
+            for i in keep:
+                try:
+                    i = int(i)
+                except (TypeError, ValueError):
+                    continue
+                # Only accept ids that were actually offered to this call -
+                # defends against Claude inventing an id from a different
+                # source's range, not just against exceeding its own cap.
+                if i in valid_indices and i not in final_ids and i not in kept_this_source:
+                    kept_this_source.append(i)
+                if len(kept_this_source) >= cap:
+                    break
+
+            final_ids.update(kept_this_source)
+            for i in kept_this_source:
+                feed, article = candidates[i]
+                already_picked_lines.append("  - [%s] %s" % (feed.title, article.title))
+
+        if not any_call_succeeded:
+            self.log.error("Claude selection failed for every source.")
             return None
 
-        # Enforce each source's slot maximum in code rather than trusting
-        # the prompt alone.
-        per_source_count = {}
-        final_ids = []
-        for i in ordered_ids:
-            feed, _article = candidates[i]
-            source = self.source_name(feed.title)
-            limit = SOURCE_SLOT_LIMITS.get(source)
-            count = per_source_count.get(source, 0)
-            if limit is not None and count >= limit:
-                continue
-            per_source_count[source] = count + 1
-            final_ids.append(i)
-            if len(final_ids) >= MAX_ARTICLES:
-                break
+        if not final_ids:
+            self.log.warn("Claude selected nothing from any source.")
 
-        return set(final_ids)
+        return final_ids
 
     @staticmethod
     def source_name(feed_title):
