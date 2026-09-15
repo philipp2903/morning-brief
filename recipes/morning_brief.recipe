@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from xml.sax.saxutils import escape as xml_escape
 
 from calibre.web.feeds import Feed
 from calibre.web.feeds.news import BasicNewsRecipe
@@ -1177,14 +1178,24 @@ class MorningBrief(BasicNewsRecipe):
 
     def cleanup(self):
         """Calibre's own front page always links a feed name to that
-        feed's own one-article-listing index page (feed_N/index.html) -
-        confirmed straight from calibre's template source, not a
-        recipe-level setting - which is a pointless extra click for a feed
-        that only has a single article, and several sources here often do
-        (Economist/Guardian/Sportschau all landed on 1 some days). Rewrite
-        the already-generated front page so those link straight to the
-        article instead. Feeds with more than one article keep the normal
-        section-index page, since that's still useful there.
+        feed's own section-index page (feed_N/index.html) - confirmed
+        straight from calibre's template source, not a recipe-level
+        setting - which is a pointless extra click no matter how many
+        articles that feed has: for exactly one, the section page is just
+        a single link to the one real article; for several, the reader
+        still has to guess which of "NYT - Business" 's 3 articles is
+        worth a tap before seeing any real headline. Rewrite the
+        already-generated front page so every feed instead shows its own
+        real article titles directly - a small non-clickable group label
+        plus one direct link per article, for any article count.
+
+        This first only handled the exactly-one-article case (fine when
+        source caps were low and most feeds landed on 0 or 1 some days),
+        but the caps have grown since and most feeds now regularly carry
+        several - "NYT - Business" and "Kicker - Alle Sportarten" landing
+        on 3-5 articles each is now the normal case, not the exception,
+        so the single-article special case stopped covering most of the
+        front page.
 
         This has to happen here, in cleanup() ("called after all articles
         have been downloaded" - the one hook documented to run at the
@@ -1202,7 +1213,7 @@ class MorningBrief(BasicNewsRecipe):
         index_path = os.path.join(self.output_dir, "index.html")
         try:
             with open(index_path, "r", encoding="utf-8") as handle:
-                html = handle.read()
+                page_html = handle.read()
         except Exception as err:
             self.log.warn("Could not read %s to rewrite front-page links: %s" % (index_path, err))
             return
@@ -1210,14 +1221,29 @@ class MorningBrief(BasicNewsRecipe):
         changed = False
         for i, feed in enumerate(feeds):
             downloaded = [a for a in feed.articles if getattr(a, "downloaded", False)]
-            if len(downloaded) != 1:
+            if not downloaded:
                 continue
-            # article.url is calibre's own post-download rewrite to the
-            # local file path relative to feed_N/ (confirmed directly in
-            # calibre's FeedTemplate, which links articles the same way).
-            target = "feed_%d/%s" % (i, downloaded[0].url)
-            pattern = r'(<li id="feed_%d"[^>]*>\s*<a href=")feed_%d/[^"]*(")' % (i, i)
-            html, count = re.subn(pattern, lambda m: m.group(1) + target + m.group(2), html, count=1)
+
+            def build_replacement(match, i=i, feed=feed, downloaded=downloaded):
+                # article.url is calibre's own post-download rewrite to
+                # the local file path relative to feed_N/ (confirmed
+                # directly in calibre's FeedTemplate, which links
+                # articles the same way).
+                items = "".join(
+                    "<li><a href=\"feed_%d/%s\">%s</a></li>"
+                    % (i, article.url, xml_escape(article.title or "Untitled"))
+                    for article in downloaded
+                )
+                return (
+                    "<li id=\"feed_%d\"%s>"
+                    "<span class=\"feed-group-title\">%s</span>"
+                    "<ul class=\"feed-article-list\">%s</ul>"
+                    "</li>"
+                    % (i, match.group(1), xml_escape(feed.title), items)
+                )
+
+            pattern = r'<li id="feed_%d"([^>]*)>\s*<a[^>]*>[^<]*</a>\s*</li>' % i
+            page_html, count = re.subn(pattern, build_replacement, page_html, count=1)
             if count:
                 changed = True
             else:
@@ -1226,7 +1252,7 @@ class MorningBrief(BasicNewsRecipe):
         if changed:
             try:
                 with open(index_path, "w", encoding="utf-8") as handle:
-                    handle.write(html)
+                    handle.write(page_html)
             except Exception as err:
                 self.log.warn("Could not write rewritten front page: %s" % err)
 
