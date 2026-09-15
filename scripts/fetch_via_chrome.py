@@ -35,6 +35,7 @@ stderr) only if the fetch itself fails outright.
 import json
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -87,6 +88,32 @@ async () => {
 """
 
 
+def ensure_browser_context(cdp_url):
+    """Open a tab via Chrome's own CDP HTTP endpoint if there isn't one
+    already, so connect_over_cdp() has a context to attach to. GET is
+    rejected ("Using unsafe HTTP verb GET... This action supports only
+    PUT verb" - confirmed directly); PUT is required. Returns True if a
+    tab was opened (or already existed to begin with is not this
+    function's job to detect - the caller checks that).
+
+    This used to be handled only by the workflow's own pre-flight check,
+    once at job start. That stopped being enough once the per-source
+    selection redesign added real latency (up to 9 sequential Claude
+    calls) before any article fetching begins - plenty of time for
+    Chrome's own tab-discarding behaviour (the leading suspect,
+    unconfirmed) to strike again in the gap. Fixing it here, at the
+    actual point of failure, means it self-heals regardless of how much
+    time has passed since the job started.
+    """
+    try:
+        request = urllib.request.Request(cdp_url + "/json/new?about:blank", method="PUT")
+        urllib.request.urlopen(request, timeout=5).read()
+        return True
+    except Exception as err:
+        print(f"Could not open a new tab via {cdp_url}: {err}", file=sys.stderr)
+        return False
+
+
 def dismiss_cookie_banner(page):
     for selector in COOKIE_CONSENT_SELECTORS:
         try:
@@ -106,24 +133,32 @@ def main():
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
+            try:
+                browser = p.chromium.connect_over_cdp(CDP_URL)
+            except Exception as err:
+                # A real, normally-launched Chrome profile with zero open
+                # tabs doesn't fail *after* connecting with an empty
+                # browser.contexts, the way a Playwright-launched browser
+                # would - it fails connect_over_cdp() itself, with
+                # "Protocol error (Browser.setDownloadBehavior): Browser
+                # context management is not supported" (confirmed directly:
+                # this exact exception, at this exact call, closing the
+                # websocket right after connecting - Playwright's own
+                # post-connect handshake apparently tries to set up
+                # download-behavior tracking for the (zero) existing
+                # contexts as part of establishing the connection, and that
+                # fails outright rather than just leaving .contexts empty).
+                # self-heal by opening a tab via Chrome's own CDP HTTP
+                # endpoint, then retry the connection from scratch.
+                print(f"connect_over_cdp failed ({err}), trying to open a tab and retry", file=sys.stderr)
+                if not ensure_browser_context(CDP_URL):
+                    raise
+                browser = p.chromium.connect_over_cdp(CDP_URL)
             if not browser.contexts:
-                # browser.new_context() is the obvious fallback here, but it
-                # doesn't work on a real, normally-launched Chrome profile
-                # (only on a browser Playwright itself launched) - confirmed
-                # directly: it fails with "Protocol error
-                # (Browser.setDownloadBehavior): Browser context management
-                # is not supported", which took down every single article in
-                # one build. An empty browser.contexts means the persistent
-                # Chrome window has no open tabs at all right now (e.g. it
-                # got relaunched since the last successful run) - that's
-                # what actually needs fixing, not a code workaround here.
                 raise RuntimeError(
-                    "Chrome at %s has no open browser context (no tabs open). "
-                    "Open at least one tab in the persistent Chrome window "
-                    "(see com.morningbrief.chrome.plist) and try again - "
-                    "a fresh browser context can't be created on a real "
-                    "Chrome profile over CDP." % CDP_URL
+                    "Chrome at %s connected but has no open browser context "
+                    "(no tabs open). Check the persistent Chrome process "
+                    "directly (see com.morningbrief.chrome.plist)." % CDP_URL
                 )
             context = browser.contexts[0]
             page = context.new_page()
