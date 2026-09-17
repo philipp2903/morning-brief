@@ -594,6 +594,23 @@ class MorningBrief(BasicNewsRecipe):
         for svg in soup.find_all("svg"):
             svg.decompose()
 
+        # NYT appends a "recirculation" widget (their own internal name -
+        # visible directly in data-testid="recirculation") after the real
+        # article: a "Related Content" / "Explore our newsletters" cross-
+        # promo block with one "Newsletter thumbnail" image per newsletter
+        # on offer. Confirmed directly on a real Opinion piece: 7 of the
+        # article's 8 total <img> tags were these thumbnails, not the
+        # article's own photo - exactly filling MAX_IMAGES_PER_ARTICLE
+        # with junk (a screenshot from the actual delivered Kindle brief is
+        # what caught this: two colourful "newsletter" tiles that read as
+        # real article images at a glance). Has to run before the
+        # MAX_IMAGES_PER_ARTICLE truncation below, not after, or the junk
+        # can still crowd out real images that just happen to sit later in
+        # the DOM. Matched by NYT's own stable test-id attribute rather
+        # than visible text (heading wording varies per newsletter/locale).
+        for widget in soup.find_all(attrs={"data-testid": "recirculation"}):
+            widget.decompose()
+
         # NYT-specific boilerplate ("SKIP ADVERTISEMENT") that Readability
         # doesn't exclude - it's a real interactive element on nytimes.com
         # (a skip-link for screen readers), not article content.
