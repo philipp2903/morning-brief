@@ -435,7 +435,14 @@ class MorningBrief(BasicNewsRecipe):
             "section": "|".join(self.GUARDIAN_SECTIONS),
             "type": "article",
             "order-by": "newest",
-            "show-fields": "trailText,body,byline",
+            # "thumbnail" was missing here, which is the whole reason every
+            # single Guardian article shipped with zero images - confirmed
+            # directly against the live API: the "body" field never
+            # contains <img>/<figure> markup at all (checked across
+            # several real articles), the lead image only exists in this
+            # separate field. It's a real, working ~500px-wide image URL
+            # every time, comfortably clear of MIN_IMAGE_DIMENSION.
+            "show-fields": "trailText,body,byline,thumbnail",
             "page-size": "30",
             "from-date": from_date,
             "api-key": api_key,
@@ -466,7 +473,21 @@ class MorningBrief(BasicNewsRecipe):
                 )
             except ValueError:
                 timestamp = time.time()
-            self._guardian_bodies[article_url] = "<html><body>%s</body></html>" % body
+            thumbnail = fields.get("thumbnail", "")
+            # xml_escape()'s default entity set only covers &/</> - safe
+            # for element text (see cleanup()'s use of it elsewhere) but
+            # not sufficient inside a "-delimited attribute, where a
+            # literal " in the title breaks the markup - confirmed
+            # directly, this exact bug produced invalid XML on the first
+            # attempt. The extra entities argument covers that.
+            attr_entities = {'"': "&quot;"}
+            hero_image = (
+                '<img src="%s" alt="%s"/>'
+                % (xml_escape(thumbnail, attr_entities),
+                   xml_escape(item.get("webTitle", ""), attr_entities))
+                if thumbnail else ""
+            )
+            self._guardian_bodies[article_url] = "<html><body>%s%s</body></html>" % (hero_image, body)
             items.append({
                 "id": item.get("id", article_url),
                 "title": item.get("webTitle", ""),
