@@ -32,6 +32,7 @@ but better than emitting nothing). Exits non-zero (with a reason on
 stderr) only if the fetch itself fails outright.
 """
 
+import html
 import json
 import os
 import sys
@@ -54,7 +55,12 @@ EXTRACT_SCRIPT = """
     const clone = document.cloneNode(true);
     const article = new Readability(clone).parse();
     if (!article || !article.content) return null;
-    return {title: article.title || '', content: article.content};
+    const ogImage = document.querySelector('meta[property="og:image"]');
+    return {
+        title: article.title || '',
+        content: article.content,
+        ogImage: ogImage ? ogImage.content : '',
+    };
 }
 """
 
@@ -184,17 +190,35 @@ def main():
                 print(f"Readability extraction failed for {url}: {err}", file=sys.stderr)
 
             if article:
-                html = "<html><head><title>%s</title></head><body>%s</body></html>" % (
-                    json.dumps(article["title"])[1:-1], article["content"]
+                content = article["content"]
+                og_image = article.get("ogImage", "")
+                if "<img" not in content and og_image:
+                    # Fallback hero image when Readability's own
+                    # extraction found none - confirmed on two separate
+                    # real sites (Tagesspiegel and The Athletic) that
+                    # this isn't rare: both had a real photo already
+                    # sitting in <head> as og:image (the near-universal
+                    # convention every site with social-media link
+                    # previews already needs), just positioned somewhere
+                    # Readability's content-boundary detection doesn't
+                    # reach - a <header>-level hero image on Tagesspiegel,
+                    # confirmed directly against the raw page. Using
+                    # og:image sidesteps needing a per-site DOM heuristic
+                    # for where each site puts its hero image.
+                    content = "<img src=\"%s\" alt=\"%s\"/>%s" % (
+                        html.escape(og_image), html.escape(article["title"]), content
+                    )
+                page_html = "<html><head><title>%s</title></head><body>%s</body></html>" % (
+                    json.dumps(article["title"])[1:-1], content
                 )
             else:
-                html = page.content()
+                page_html = page.content()
             page.close()
     except Exception as err:
         print(f"Could not fetch {url} via Chrome CDP at {CDP_URL}: {err}", file=sys.stderr)
         sys.exit(1)
 
-    sys.stdout.write(html)
+    sys.stdout.write(page_html)
 
 
 if __name__ == "__main__":
