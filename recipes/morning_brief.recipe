@@ -84,15 +84,19 @@ of a story already carried on a previous day.
 # apparently too much to ask reliably. One focused call per source, each
 # only weighing its own pool against its own quota, is the actual fix.
 SOURCE_ROLES = {
-    "Economist": (5,
+    "Economist": (6,
         "International economics and business analysis, plus its Leaders "
-        "and By Invitation opinion pieces: this is the exact voice and "
-        "altitude the rest of the brief is calibrated against, so hold "
-        "every other source's \"analysis over recap\" pieces to this bar."),
+        "and By Invitation opinion pieces and its Science & Technology "
+        "section: this is the exact voice and altitude the rest of the "
+        "brief is calibrated against, so hold every other source's "
+        "\"analysis over recap\" pieces to this bar. Tech/science is a "
+        "real part of this source's remit now, not just an occasional "
+        "extra - don't let economics/business crowd it out every day."),
     "NYT": (6,
         "US politics and business; foreign affairs the US is driving; "
-        "plus its Opinion section. Prefer consequence over process: what "
-        "a decision changes, not who said what about it."),
+        "its Technology section; plus its Opinion section. Prefer "
+        "consequence over process: what a decision changes, not who "
+        "said what about it."),
     "Guardian": (4,
         "International business and foreign affairs (free, supplementary) "
         "- only for stories genuinely not already well covered by what's "
@@ -129,11 +133,11 @@ SOURCE_ROLES = {
         "ruling, a league-format reform), or a club dispute all count, "
         "not only sackings and title races."),
     "Athletic": (5,
-        "US sport (NFL, NBA, MLB), in-depth: analysis and reported "
+        "US sport (NFL, NBA, MLS), in-depth: analysis and reported "
         "features, the sport-desk equivalent of the long-read bar this "
         "brief holds international sources to elsewhere."),
     "ESPN": (2,
-        "US sport (NFL, NBA, MLB) quick news: scores, trades, injuries "
+        "US sport (NFL, NBA) quick news: scores, trades, injuries "
         "when they actually matter and The Athletic hasn't already "
         "covered them in more depth (see ALREADY SELECTED). Same bar as "
         "Sportschau/Kicker: genuinely interesting, not routine game "
@@ -358,6 +362,7 @@ class MorningBrief(BasicNewsRecipe):
         # Opinion: the weekly leaders and guest-contributor pieces.
         ("Economist - Leaders", "https://www.economist.com/leaders/rss.xml"),
         ("Economist - By Invitation", "https://www.economist.com/by-invitation/rss.xml"),
+        ("Economist - Science & Technology", "https://www.economist.com/science-and-technology/rss.xml"),
         ("NYT - Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
         ("NYT - Politics", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"),
@@ -393,7 +398,7 @@ class MorningBrief(BasicNewsRecipe):
         # access (NYT All Access includes it).
         ("Athletic - NFL", "https://www.nytimes.com/athletic/rss/nfl/"),
         ("Athletic - NBA", "https://www.nytimes.com/athletic/rss/nba/"),
-        ("Athletic - MLB", "https://www.nytimes.com/athletic/rss/mlb/"),
+        ("Athletic - MLS", "https://www.nytimes.com/athletic/rss/mls/"),
         ("Quanta - Articles", "https://api.quantamagazine.org/feed/"),
     ]
 
@@ -1214,6 +1219,112 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- front page -------------------------------------------------------
 
+    # WMO weather interpretation codes - the scheme Open-Meteo's API uses
+    # (https://open-meteo.com/en/docs documents the full table); this
+    # covers what Berlin actually sees.
+    WMO_WEATHER_CODES = {
+        0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
+        45: "fog", 48: "depositing rime fog",
+        51: "light drizzle", 53: "moderate drizzle", 55: "dense drizzle",
+        56: "light freezing drizzle", 57: "dense freezing drizzle",
+        61: "slight rain", 63: "moderate rain", 65: "heavy rain",
+        66: "light freezing rain", 67: "heavy freezing rain",
+        71: "slight snow", 73: "moderate snow", 75: "heavy snow",
+        77: "snow grains",
+        80: "slight rain showers", 81: "moderate rain showers",
+        82: "violent rain showers",
+        85: "slight snow showers", 86: "heavy snow showers",
+        95: "thunderstorm", 96: "thunderstorm with slight hail",
+        99: "thunderstorm with heavy hail",
+    }
+
+    def fetch_berlin_weather(self):
+        """A short "Berlin: 14°C, light rain..." summary for the
+        front page, from Open-Meteo - free, no API key or login needed,
+        unlike literally every actual news source here. Returns None on
+        any failure; the front page just goes without a weather line
+        rather than ever blocking a build over this.
+        """
+        params = {
+            "latitude": "52.52",
+            "longitude": "13.405",
+            "current": "temperature_2m,weathercode",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "timezone": "Europe/Berlin",
+        }
+        url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
+        try:
+            with urllib.request.urlopen(url, timeout=15) as response:
+                payload = json.load(response)
+            current = payload["current"]
+            daily = payload["daily"]
+            description = self.WMO_WEATHER_CODES.get(current.get("weathercode"), "")
+            return (
+                "Berlin: %.0f°C%s. High %.0f°C / low %.0f°C, "
+                "%d%% chance of rain."
+                % (
+                    current["temperature_2m"],
+                    " (%s)" % description if description else "",
+                    daily["temperature_2m_max"][0],
+                    daily["temperature_2m_min"][0],
+                    daily["precipitation_probability_max"][0],
+                )
+            )
+        except Exception as err:
+            self.log.warn("Could not fetch Berlin weather: %s" % err)
+            return None
+
+    def get_cover_url(self):
+        """A real photo from one of today's selected articles as the
+        epub/Kindle cover, instead of calibre's default plain-text title
+        card - "a nice picture of some report from the day" per explicit
+        request.
+
+        Confirmed directly in calibre's own build_index() (news.py):
+        download_cover() runs right after parse_feeds() returns and
+        before any article is actually downloaded - so self._final_feeds
+        is already the real, final selection by this point (not yet
+        downloaded, article.url is still the original web URL). Tries
+        sources in SOURCE_ROLES' own priority order (Economist/NYT first,
+        Quanta last), not feed order, so the cover favours the brief's
+        own top stories.
+
+        Reuses fetch_raw_html() rather than fetching anything fresh: the
+        quality gate (drop_unreadable_articles(), called earlier in the
+        same parse_feeds()) already fetched every surviving article once
+        and cached the result (self._chrome_fetch_cache /
+        self._guardian_bodies), so this is a cache hit for every
+        candidate, not an extra network round-trip - and Guardian's
+        thumbnail is already embedded as a real <img> tag in
+        self._guardian_bodies (see fetch_guardian_candidates()), so the
+        same regex finds it there too without a source-specific branch.
+        """
+        feeds = getattr(self, "_final_feeds", None)
+        if not feeds:
+            return None
+
+        candidates_by_source = {}
+        for feed in feeds:
+            candidates_by_source.setdefault(self.source_name(feed.title), []).extend(feed.articles)
+
+        for source in SOURCE_ROLES:
+            for article in candidates_by_source.get(source, []):
+                url = self.article_url(article)
+                if not url:
+                    continue
+                try:
+                    raw = self.fetch_raw_html(url)
+                except Exception as err:
+                    self.log.warn("Could not fetch %s for cover image candidate: %s" % (url, err))
+                    continue
+                match = re.search(r'<img\b[^>]*\bsrc="(https?://[^"]+)"', raw or "")
+                if match:
+                    self.log.info("Using cover image from [%s] %s" % (source, url))
+                    return match.group(1)
+
+        self.log.warn("No cover image candidate found in today's selection; using calibre's default cover.")
+        return None
+
     def cleanup(self):
         """Calibre's own front page always links a feed name to that
         feed's own section-index page (feed_N/index.html) - confirmed
@@ -1286,6 +1397,19 @@ class MorningBrief(BasicNewsRecipe):
                 changed = True
             else:
                 self.log.warn("Could not rewrite front-page link for feed_%d (%s)" % (i, feed.title))
+
+        weather = self.fetch_berlin_weather()
+        if weather:
+            new_page_html, count = re.subn(
+                r'(<p class="calibre4">[^<]*</p>)',
+                lambda m: m.group(1) + '<p class="weather-report">%s</p>' % xml_escape(weather),
+                page_html, count=1,
+            )
+            if count:
+                page_html = new_page_html
+                changed = True
+            else:
+                self.log.warn("Could not inject weather into front page (date paragraph not found).")
 
         if changed:
             try:
