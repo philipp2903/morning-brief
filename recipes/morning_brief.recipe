@@ -1400,8 +1400,20 @@ class MorningBrief(BasicNewsRecipe):
 
         weather = self.fetch_berlin_weather()
         if weather:
+            # Matching on class="calibre4" seemed natural (that's what
+            # this paragraph showed when first inspected) but is wrong -
+            # confirmed directly: calibre reassigns its own auto-generated
+            # calibreN class names in a later re-serialization pass, after
+            # cleanup() runs, based on whatever full set of style rules
+            # exists by then (which now includes the weather/feed-group
+            # classes this very code introduces) - so the number this
+            # paragraph gets can shift from build to build, and silently
+            # didn't match on a real run. Match on RECIPE_VERSION instead:
+            # it's baked into this exact paragraph via timefmt, unique to
+            # this build, and never touched by calibre's own class
+            # renumbering, since it's text content, not a class name.
             new_page_html, count = re.subn(
-                r'(<p class="calibre4">[^<]*</p>)',
+                r'(<p\b[^>]*>[^<]*%s[^<]*</p>)' % re.escape(RECIPE_VERSION),
                 lambda m: m.group(1) + '<p class="weather-report">%s</p>' % xml_escape(weather),
                 page_html, count=1,
             )
