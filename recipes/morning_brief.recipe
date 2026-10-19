@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # Morning Brief - a curated daily digest for Kindle.
 #
-# Pulls headlines from The Economist, NYT, The Guardian, Tagesspiegel,
-# Sportschau, Kicker, ESPN, The Athletic and Quanta, asks Claude to fill each
-# source's quota (see SOURCE_ROLES) with its best available pieces,
+# Pulls headlines from The Economist, NYT, The Guardian, Tagesspiegel, HNA
+# (Kassel), Sportschau, Kicker, ESPN, The Athletic and Quanta, asks Claude to
+# fill each source's quota (see SOURCE_ROLES) with its best available pieces,
 # downloads only those, and binds them into one periodical.
 
 import calendar
@@ -44,21 +44,28 @@ through another source's own candidates (e.g. a Tagesspiegel piece that is
 really about the Berlin election, or an Economist/NYT piece on German
 politics specifically).
 
+Kassel is the reader's hometown. A fixed slice of the brief is local news
+from there (the city and Landkreis, Baunatal, the football club KSV Hessen
+Kassel and the ice hockey club Kassel Huskies) - wanted out of personal
+attachment rather than analytic relevance, so it is not ranked against the
+priorities above; it simply gets its own slots.
+
 Reader is a paying subscriber to The Economist, The New York Times (which
 covers The Athletic), and Tagesspiegel Plus - subscription content from
 those three is fully accessible and should be used freely, not treated as
-harder to reach than the free sources. The Guardian and Quanta are the only
-free sources left in the brief; they exist to fill gaps the paid sources
+harder to reach than the free sources. The Guardian, Quanta and the Kassel
+desk (HNA) are free sources; they exist to fill gaps the paid sources
 don't cover, not to compete with them.
 
 Never ship a snippet or a paywall teaser as if it were the full article -
 if a source only gives a partial preview, it does not belong in the brief
 at all, regardless of how interesting the headline is.
 
-German-language sources (Tagesspiegel, Sportschau, Kicker) are for German
-and Berlin-specific stories. Do not use them as a backdoor for US or other
-non-German wire stories that happen to be translated/covered in German -
-those belong to the NYT/Economist/Guardian slots instead, in English.
+German-language sources (Tagesspiegel, Kassel, Sportschau, Kicker) are for
+German, Berlin- and Kassel-specific stories. Do not use them as a backdoor
+for US or other non-German wire stories that happen to be translated/
+covered in German - those belong to the NYT/Economist/Guardian slots
+instead, in English.
 
 Not wanted at all: celebrity and royals, lifestyle and wellness, horoscopes,
 listicles, crime reporting without wider significance, and repeat coverage
@@ -113,6 +120,24 @@ SOURCE_ROLES = {
         "human-interest or lifestyle features (travel diaries, personal "
         "essays, culture-page filler) - a quiet news day with one real "
         "Berlin story beats five soft features every time."),
+    "Kassel": (5,
+        "The reader's hometown desk, from HNA (Hessische/Niedersaechsische "
+        "Allgemeine): news about Kassel (the city and Landkreis), Baunatal "
+        "(incl. the VW plant), the football club KSV Hessen Kassel "
+        "(Regionalliga Suedwest) and the ice hockey club Kassel Huskies "
+        "(DEL2). Only stories genuinely about those places/clubs - the "
+        "Baunatal and Landkreis feeds also carry unrelated regional and "
+        "national filler (celebrity, consumer tips, other towns' news), "
+        "skip all of that. Aim for a mix rather than five of one thing: "
+        "when KSV or the Huskies have real news (a match report/analysis "
+        "of a result, an injury, a transfer, a coaching or board decision, "
+        "club finances) include it; alongside that, the most significant "
+        "city/region stories (politics, economy, VW/Baunatal, city "
+        "development, transport, culture such as museums or documenta). "
+        "Skip photo galleries, live tickers, kick-off announcements and "
+        "pure match previews, amateur/youth sport other than the two named "
+        "clubs, and festival, crime-blotter or human-interest fluff without "
+        "wider local significance."),
     "Sportschau": (3,
         "German sport generally (not just football). Only when the story "
         "is genuinely interesting: a manager sacked, a club in financial "
@@ -292,7 +317,8 @@ class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
     description = (
         "A curated selection from The Economist, NYT, The Guardian, "
-        "Tagesspiegel, Sportschau, Kicker, ESPN, The Athletic and Quanta"
+        "Tagesspiegel, HNA (Kassel), Sportschau, Kicker, ESPN, The Athletic and "
+        "Quanta"
     )
     __author__ = "Philipp Schett"
     publication_type = "newspaper"
@@ -380,6 +406,19 @@ class MorningBrief(BasicNewsRecipe):
         # actually on-topic.
         ("Tagesspiegel - Berlin", "https://www.tagesspiegel.de/contentexport/feed/berlin"),
         ("Tagesspiegel - Meinung", "https://www.tagesspiegel.de/contentexport/feed/meinung"),
+        # Hometown desk. All four are HNA (hna.de) topic feeds, free to read
+        # in full (checked directly: real articles of 2.5-5.5k chars via the
+        # Chrome pipeline, no paywall markers). The Baunatal feed is the
+        # *real* topic slug (baunatal-ort312516) - the obvious guesses
+        # (/kassel/baunatal/, /lokales/baunatal/) return 404 or silently
+        # fall back to a generic HNA feed with no Baunatal content at all.
+        # The Baunatal feed still includes some neighbouring-Landkreis and
+        # national filler, which is filtered by the selection prompt (see
+        # SOURCE_ROLES["Kassel"]), not here.
+        ("Kassel - Stadt & Region", "https://www.hna.de/kassel/rssfeed.rdf"),
+        ("Kassel - Baunatal", "https://www.hna.de/lokales/kreis-kassel/baunatal-ort312516/rssfeed.rdf"),
+        ("Kassel - KSV Hessen Kassel", "https://www.hna.de/sport/ksv-hessen-kassel/rssfeed.rdf"),
+        ("Kassel - Huskies", "https://www.hna.de/sport/kassel-huskies/rssfeed.rdf"),
         ("Sportschau - Alle Sportarten", "https://www.sportschau.de/index~rss2.xml"),
         # Kicker's own site is Cloudflare/DataDome-walled like NYT/Economist
         # (routes through the Chrome CDP fetcher, logged-in session, same as
@@ -738,6 +777,12 @@ class MorningBrief(BasicNewsRecipe):
         "liveblog", "live-blog", "liveticker", "live-ticker", "live-updates",
         # German broadcast/ticker phrasing (e.g. "... live im Ersten")
         "live im ersten", "live im zdf", "livestream", "live-stream",
+        # HNA's match tickers only say "live" as a standalone word in the
+        # slug/title ("...regionalliga-live-ksv-hessen-kassel-...",
+        # "del2-live-kassel-huskies-...") - none of the compound markers
+        # above match that. Hyphens on both sides keep this to the
+        # standalone word, not e.g. "alive" or "delivery".
+        "-live-",
     )
 
     def is_live_blog(self, feed, article):
@@ -1217,7 +1262,17 @@ class MorningBrief(BasicNewsRecipe):
             except Exception as err:
                 self.log.warn("Could not write %s: %s" % (TODAY_ARTICLES_FILE, err))
 
-    # -- front page -------------------------------------------------------
+    # -- weather, cover and front page ------------------------------------
+
+    # Where the weather is for: the reader's own postcode (12587,
+    # Friedrichshagen), not "Berlin" in general - coordinates from
+    # Open-Meteo's own geocoding API for that postcode.
+    WEATHER_PLACE = "Friedrichshagen, 12587 Berlin"
+    WEATHER_LAT = "52.4505"
+    WEATHER_LON = "13.6246"
+
+    # How many hourly rows the cover shows (18 fills the page).
+    COVER_HOURS = 18
 
     # WMO weather interpretation codes - the scheme Open-Meteo's API uses
     # (https://open-meteo.com/en/docs documents the full table); this
@@ -1238,92 +1293,315 @@ class MorningBrief(BasicNewsRecipe):
         99: "thunderstorm with heavy hail",
     }
 
-    def fetch_berlin_weather(self):
-        """A short "Berlin: 14°C, light rain..." summary for the
-        front page, from Open-Meteo - free, no API key or login needed,
-        unlike literally every actual news source here. Returns None on
-        any failure; the front page just goes without a weather line
-        rather than ever blocking a build over this.
+    @staticmethod
+    def berlin_now():
+        """(naive Berlin wall-clock datetime, "CEST"/"CET"). The build
+        itself can run at any hour (a manual run, a delayed schedule), so
+        the cover states when this edition was actually created rather
+        than assuming the 04:00 schedule."""
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.datetime.now(ZoneInfo("Europe/Berlin"))
+            return now.replace(tzinfo=None), now.tzname() or "CET"
+        except Exception:
+            utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            return utc + datetime.timedelta(hours=1), "CET"
+
+    def fetch_weather(self):
+        """Today's weather for WEATHER_PLACE from Open-Meteo - free, no API
+        key or login, unlike literally every actual news source here.
+        Fetched once per build and cached (the cover and the front page
+        both use it). Returns None on any failure; both just go without a
+        weather section rather than ever blocking a build over this.
+
+        Returns {"current": {...}, "today": {...}, "hours": [{"dt",
+        "temp", "rain", "mm", "code"}, ...]} - "hours" covers today and
+        tomorrow (naive Berlin wall-clock datetimes, as Open-Meteo returns
+        them for the requested timezone).
         """
+        if hasattr(self, "_weather_cache"):
+            return self._weather_cache
+        self._weather_cache = None
         params = {
-            "latitude": "52.52",
-            "longitude": "13.405",
+            "latitude": self.WEATHER_LAT,
+            "longitude": self.WEATHER_LON,
             "current": "temperature_2m,weathercode",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "hourly": "temperature_2m,precipitation_probability,precipitation,weathercode",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
             "timezone": "Europe/Berlin",
+            "forecast_days": "2",
         }
         url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
         try:
             with urllib.request.urlopen(url, timeout=15) as response:
                 payload = json.load(response)
-            current = payload["current"]
+            hourly = payload["hourly"]
+            hours = []
+            for i, stamp in enumerate(hourly["time"]):
+                hours.append({
+                    "dt": datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M"),
+                    "temp": hourly["temperature_2m"][i],
+                    "rain": hourly["precipitation_probability"][i],
+                    "mm": hourly["precipitation"][i],
+                    "code": hourly["weathercode"][i],
+                })
             daily = payload["daily"]
-            description = self.WMO_WEATHER_CODES.get(current.get("weathercode"), "")
-            return (
-                "Berlin: %.0f°C%s. High %.0f°C / low %.0f°C, "
-                "%d%% chance of rain."
-                % (
-                    current["temperature_2m"],
-                    " (%s)" % description if description else "",
-                    daily["temperature_2m_max"][0],
-                    daily["temperature_2m_min"][0],
-                    daily["precipitation_probability_max"][0],
-                )
-            )
+            self._weather_cache = {
+                "current": payload["current"],
+                "today": {
+                    "high": daily["temperature_2m_max"][0],
+                    "low": daily["temperature_2m_min"][0],
+                    "rain_max": daily["precipitation_probability_max"][0],
+                    "sunrise": daily["sunrise"][0][-5:],
+                    "sunset": daily["sunset"][0][-5:],
+                },
+                "hours": hours,
+            }
         except Exception as err:
-            self.log.warn("Could not fetch Berlin weather: %s" % err)
+            self.log.warn("Could not fetch weather: %s" % err)
+        return self._weather_cache
+
+    def weather_hours_for_cover(self, weather):
+        """The next COVER_HOURS hourly entries: from 06:00 today for the
+        usual 04:00 build, or from the current hour for a later (manual)
+        run, so a midday build doesn't list hours already gone."""
+        now, _tz = self.berlin_now()
+        start = now.replace(hour=6 if now.hour < 6 else now.hour, minute=0, second=0, microsecond=0)
+        upcoming = [h for h in weather["hours"] if h["dt"] >= start]
+        return upcoming[:self.COVER_HOURS]
+
+    @staticmethod
+    def rain_summary(hours, threshold=40):
+        """"Rain likely 14:00-18:00 (up to 70%)", or an honest "no rain
+        expected" - "when it's supposed to rain" is the whole point of the
+        hourly rows, so this names the windows outright instead of making
+        the reader scan the bars."""
+        windows = []
+        current = None
+        for h in hours:
+            prob = h["rain"] or 0
+            if prob >= threshold:
+                if current and h["dt"] - current["end"] == datetime.timedelta(hours=1):
+                    current["end"] = h["dt"]
+                    current["max"] = max(current["max"], prob)
+                else:
+                    current = {"start": h["dt"], "end": h["dt"], "max": prob}
+                    windows.append(current)
+        if windows:
+            return "Rain likely " + ", ".join(
+                "%s–%s (up to %d%%)" % (
+                    w["start"].strftime("%H:%M"),
+                    (w["end"] + datetime.timedelta(hours=1)).strftime("%H:%M"),
+                    w["max"],
+                )
+                for w in windows
+            )
+        peak = max([(h["rain"] or 0) for h in hours] or [0])
+        if peak >= 20:
+            return "Small chance of rain (up to %d%%)" % peak
+        return "No rain expected"
+
+    def weather_summary_line(self):
+        """One-line version for the front page (the cover has the full
+        hourly detail)."""
+        weather = self.fetch_weather()
+        if not weather:
             return None
+        description = self.WMO_WEATHER_CODES.get(weather["current"].get("weathercode"), "")
+        today = weather["today"]
+        return "%s: %.0f°C%s. High %.0f°C / low %.0f°C. %s." % (
+            self.WEATHER_PLACE.split(",")[0],
+            weather["current"]["temperature_2m"],
+            " (%s)" % description if description else "",
+            today["high"], today["low"],
+            self.rain_summary(self.weather_hours_for_cover(weather)),
+        )
 
-    def get_cover_url(self):
-        """A real photo from one of today's selected articles as the
-        epub/Kindle cover, instead of calibre's default plain-text title
-        card - "a nice picture of some report from the day" per explicit
-        request.
+    # -- cover ------------------------------------------------------------
 
-        Confirmed directly in calibre's own build_index() (news.py):
-        download_cover() runs right after parse_feeds() returns and
-        before any article is actually downloaded - so self._final_feeds
-        is already the real, final selection by this point (not yet
-        downloaded, article.url is still the original web URL). Tries
-        sources in SOURCE_ROLES' own priority order (Economist/NYT first,
-        Quanta last), not feed order, so the cover favours the brief's
-        own top stories.
+    COVER_SERIF_BOLD = [
+        "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+        "/Library/Fonts/Georgia Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    ]
+    COVER_SERIF = [
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/Library/Fonts/Georgia.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    ]
+    COVER_SANS = [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    COVER_SANS_BOLD = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
 
-        Reuses fetch_raw_html() rather than fetching anything fresh: the
-        quality gate (drop_unreadable_articles(), called earlier in the
-        same parse_feeds()) already fetched every surviving article once
-        and cached the result (self._chrome_fetch_cache /
-        self._guardian_bodies), so this is a cache hit for every
-        candidate, not an extra network round-trip - and Guardian's
-        thumbnail is already embedded as a real <img> tag in
-        self._guardian_bodies (see fetch_guardian_candidates()), so the
-        same regex finds it there too without a source-specific branch.
-        """
-        feeds = getattr(self, "_final_feeds", None)
-        if not feeds:
-            return None
+    @staticmethod
+    def cover_font(paths, size):
+        from PIL import ImageFont
+        for path in paths:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+        try:
+            return ImageFont.load_default(size)
+        except TypeError:
+            return ImageFont.load_default()
 
-        candidates_by_source = {}
-        for feed in feeds:
-            candidates_by_source.setdefault(self.source_name(feed.title), []).extend(feed.articles)
+    def render_cover(self, weather, article_count, source_count):
+        """JPEG bytes: title, when this edition was created, today's
+        weather and an hourly forecast with rain chances. Replaces an
+        earlier cover built from an article's photo, which turned out to
+        be "often just an image, repeats itself, and sometimes is bad
+        quality" - this one is information, and different every day."""
+        import io
+        from PIL import Image, ImageDraw
 
-        for source in SOURCE_ROLES:
-            for article in candidates_by_source.get(source, []):
-                url = self.article_url(article)
-                if not url:
-                    continue
-                try:
-                    raw = self.fetch_raw_html(url)
-                except Exception as err:
-                    self.log.warn("Could not fetch %s for cover image candidate: %s" % (url, err))
-                    continue
-                match = re.search(r'<img\b[^>]*\bsrc="(https?://[^"]+)"', raw or "")
-                if match:
-                    self.log.info("Using cover image from [%s] %s" % (source, url))
-                    return match.group(1)
+        W, H, M = 1200, 1920, 90
+        img = Image.new("RGB", (W, H), "white")
+        d = ImageDraw.Draw(img)
+        ink, grey, light = (0, 0, 0), (95, 95, 95), (222, 222, 222)
 
-        self.log.warn("No cover image candidate found in today's selection; using calibre's default cover.")
-        return None
+        def text_w(text, font):
+            return d.textlength(text, font=font)
+
+        def centered(text, y, font, fill=ink):
+            d.text(((W - text_w(text, font)) / 2, y), text, font=font, fill=fill)
+
+        def fit(text, y, paths, size, max_w):
+            font = self.cover_font(paths, size)
+            while text_w(text, font) > max_w and size > 20:
+                size -= 4
+                font = self.cover_font(paths, size)
+            return font
+
+        now, tz = self.berlin_now()
+
+        # Masthead
+        d.rectangle([M, 70, W - M, 77], fill=ink)
+        d.rectangle([M, 88, W - M, 91], fill=ink)
+        title_font = fit("MORNING BRIEF", 0, self.COVER_SERIF_BOLD, 124, W - 2 * M)
+        centered("MORNING BRIEF", 120, title_font)
+        d.rectangle([M, 255, W - M, 258], fill=ink)
+        d.rectangle([M, 267, W - M, 274], fill=ink)
+
+        # Date and creation time
+        centered(now.strftime("%A, %d %B %Y").replace(" 0", " "), 295, self.cover_font(self.COVER_SERIF_BOLD, 64))
+        centered("Created %s %s (Berlin time)" % (now.strftime("%H:%M"), tz), 385,
+                 self.cover_font(self.COVER_SANS, 38), grey)
+        d.rectangle([M, 450, W - M, 452], fill=light)
+
+        # Weather
+        label_font = self.cover_font(self.COVER_SANS_BOLD, 30)
+        d.text((M, 475), "WEATHER · %s" % self.WEATHER_PLACE.upper(), font=label_font, fill=grey)
+
+        if not weather:
+            centered("Weather unavailable this morning", 660, self.cover_font(self.COVER_SERIF, 52), grey)
+            rows = []
+        else:
+            cur = weather["current"]
+            today = weather["today"]
+            rows = self.weather_hours_for_cover(weather)
+            description = self.WMO_WEATHER_CODES.get(cur.get("weathercode"), "")
+            d.text((M, 520), "%.0f°" % cur["temperature_2m"], font=self.cover_font(self.COVER_SERIF_BOLD, 150), fill=ink)
+            right = self.cover_font(self.COVER_SANS, 40)
+            d.text((430, 540), description.capitalize(), font=self.cover_font(self.COVER_SERIF_BOLD, 54), fill=ink)
+            d.text((430, 615), "High %.0f°   Low %.0f°" % (today["high"], today["low"]), font=right, fill=ink)
+            d.text((430, 670), "Sunrise %s   Sunset %s" % (today["sunrise"], today["sunset"]), font=self.cover_font(self.COVER_SANS, 34), fill=grey)
+
+            summary = self.rain_summary(rows)
+            rain_font = self.cover_font(self.COVER_SANS_BOLD, 44)
+            raining = summary.startswith("Rain likely")
+            box_top, box_bottom = 730, 810
+            if raining:
+                d.rectangle([M, box_top, W - M, box_bottom], outline=ink, width=5)
+            centered(summary, box_top + 16, fit(summary, 0, self.COVER_SANS_BOLD, 44, W - 2 * M - 40), ink if raining else grey)
+
+        # Hourly table
+        if rows:
+            y = 855
+            head = self.cover_font(self.COVER_SANS_BOLD, 26)
+            d.text((M, y), "HOUR", font=head, fill=grey)
+            d.text((300 - text_w("TEMP", head), y), "TEMP", font=head, fill=grey)
+            d.text((335, y), "CONDITIONS", font=head, fill=grey)
+            d.text((715, y), "RAIN CHANCE", font=head, fill=grey)
+            d.rectangle([M, y + 38, W - M, y + 40], fill=ink)
+            y += 52
+            row_h = 50
+            hour_font = self.cover_font(self.COVER_SANS_BOLD, 34)
+            temp_font = self.cover_font(self.COVER_SANS, 34)
+            cond_font = self.cover_font(self.COVER_SANS, 30)
+            pct_font = self.cover_font(self.COVER_SANS_BOLD, 32)
+            previous_day = rows[0]["dt"].date()
+            # Never let rows run into the footer: a late (manual) build
+            # starts mid-day, so 18 rows plus the "tomorrow" divider can
+            # exceed the page - caught on a midday test render where the
+            # last rows were printed over the footer text.
+            limit_y = H - 98
+            for h in rows:
+                crossing = h["dt"].date() != previous_day
+                if y + row_h + (36 if crossing else 0) > limit_y:
+                    break
+                if crossing:
+                    d.text((M, y + 2), "TOMORROW", font=head, fill=grey)
+                    d.rectangle([M + 190, y + 14, W - M, y + 15], fill=ink)
+                    y += 36
+                    previous_day = h["dt"].date()
+                prob = h["rain"] or 0
+                wet = prob >= 40
+                if wet:
+                    d.rectangle([M - 12, y - 4, W - M + 12, y + row_h - 8], fill=light)
+                d.text((M, y), h["dt"].strftime("%H:%M"), font=hour_font, fill=ink)
+                temp = "%.0f°" % h["temp"]
+                d.text((300 - text_w(temp, temp_font), y), temp, font=temp_font, fill=ink)
+                cond = self.WMO_WEATHER_CODES.get(h["code"], "")
+                while cond and text_w(cond, cond_font) > 350:
+                    cond = cond[:-2]
+                d.text((335, y + 3), cond, font=cond_font, fill=grey if not wet else ink)
+                bar_x, bar_w, bar_h = 715, 290, 30
+                d.rectangle([bar_x, y + 4, bar_x + bar_w, y + 4 + bar_h], outline=ink, width=2)
+                fill_w = int(bar_w * prob / 100)
+                if fill_w:
+                    d.rectangle([bar_x, y + 4, bar_x + fill_w, y + 4 + bar_h], fill=ink if wet else (130, 130, 130))
+                pct = "%d%%" % prob
+                d.text((W - M - text_w(pct, pct_font), y), pct, font=pct_font, fill=ink)
+                y += row_h
+
+        # Footer
+        centered("%d articles from %d sources" % (article_count, source_count), H - 62,
+                 self.cover_font(self.COVER_SANS, 32), grey)
+
+        buffer = io.BytesIO()
+        img.save(buffer, "JPEG", quality=92)
+        return buffer.getvalue()
+
+    def default_cover(self, cover_file):
+        """Calibre calls this from create_opf whenever there's no cover
+        image from get_cover_url() (confirmed in calibre's own news.py:
+        cover_path is None -> default_cover(cover_file)) - which is now
+        always, since get_cover_url() is deliberately left alone. Runs
+        after the articles are downloaded, so the footer's counts are
+        real."""
+        try:
+            feeds = getattr(self, "_final_feeds", None) or []
+            article_count = 0
+            sources = set()
+            for feed in feeds:
+                n = len([a for a in feed.articles if getattr(a, "downloaded", False)]) or len(feed.articles)
+                if n:
+                    article_count += n
+                    sources.add(self.source_name(feed.title))
+            cover_file.write(self.render_cover(self.fetch_weather(), article_count, len(sources)))
+            cover_file.flush()
+            return True
+        except Exception as err:
+            self.log.warn("Could not render the weather cover (%s); using calibre's default cover." % err)
+            return BasicNewsRecipe.default_cover(self, cover_file)
 
     def cleanup(self):
         """Calibre's own front page always links a feed name to that
@@ -1398,7 +1676,7 @@ class MorningBrief(BasicNewsRecipe):
             else:
                 self.log.warn("Could not rewrite front-page link for feed_%d (%s)" % (i, feed.title))
 
-        weather = self.fetch_berlin_weather()
+        weather = self.weather_summary_line()
         if weather:
             # Matching on class="calibre4" seemed natural (that's what
             # this paragraph showed when first inspected) but is wrong -

@@ -2,9 +2,15 @@ name: Morning Brief
 
 on:
   schedule:
-    # 03:00 UTC, every day.
-    # Berlin is UTC+2 in summer and UTC+1 in winter, and GitHub can delay
-    # scheduled runs under load, so this is deliberately early.
+    # The brief is created at 04:00 Berlin time, all year. GitHub cron is
+    # UTC-only and Berlin is UTC+2 in summer / UTC+1 in winter, so there are
+    # two crons and the "gate" job (scripts/schedule_gate.py) lets the right
+    # one through: 02:00 UTC is 04:00 in summer, 03:00 UTC is 04:00 in
+    # winter. In summer the second one doubles as an automatic retry if the
+    # first failed or never fired (it skips itself if today was delivered).
+    # GitHub also delays scheduled runs by minutes under load, which is why
+    # the gate accepts anything from 04:00 to 08:59 rather than exactly 04.
+    - cron: "0 2 * * *"
     - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
@@ -17,8 +23,33 @@ on:
 permissions:
   contents: write
 
+# One run at a time: if a delayed first cron and the second cron overlap,
+# the second waits and then sees (via the gate) that today was delivered.
+concurrency:
+  group: morning-brief
+  cancel-in-progress: false
+
 jobs:
+  gate:
+    # Decides whether a *scheduled* run should build at all (manual runs
+    # always do). Hosted runner on purpose: it's a few seconds of work and
+    # must not depend on the Mac runner being free.
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.decide.outputs.proceed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Decide
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/schedule_gate.py
+
   build-and-send:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     # Runs on philipp's own Mac (residential IP) rather than GitHub's cloud
     # runners: NYT's bot-detection (DataDome) blocks the
     # well-known datacenter IP ranges GitHub-hosted runners use, independent
