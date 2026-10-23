@@ -1565,7 +1565,12 @@ class MorningBrief(BasicNewsRecipe):
         detail = self.rain_detail(hours)
         if not detail:
             return None
-        text = "%s rain  \u00b7  %s in total" % (detail["label"].capitalize(), self.format_mm(detail["total"]))
+        if detail["total"] < 0.1:
+            # Likely on paper, but nothing measurable: say so rather than
+            # "drizzle, under 0.1 mm", which reads like a contradiction.
+            return "Barely any rain  \u00b7  under 0.1 mm in total"
+        word = "Drizzle" if detail["label"] == "drizzle" else "%s rain" % detail["label"].capitalize()
+        text = "%s  \u00b7  %s in total" % (word, self.format_mm(detail["total"]))
         if detail["peak"] >= 0.1:
             text += "  \u00b7  peak %.1f mm/h at %s" % (detail["peak"], detail["peak_time"].strftime("%H:%M"))
         return text
