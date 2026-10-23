@@ -452,6 +452,9 @@ class MorningBrief(BasicNewsRecipe):
         # pre-check and the real download so each article only costs one
         # Chrome navigation, not two.
         self._chrome_fetch_cache = {}
+        # Image identities already used by an earlier article in this
+        # build - see drop_repeated_images().
+        self._seen_image_keys = set()
         # When the Chrome+Readability.js path is configured, it already
         # returns clean extracted content for every article (Guardian
         # excepted, which is clean for a different reason - see above).
@@ -531,7 +534,12 @@ class MorningBrief(BasicNewsRecipe):
                    xml_escape(item.get("webTitle", ""), attr_entities))
                 if thumbnail else ""
             )
-            self._guardian_bodies[article_url] = "<html><body>%s%s</body></html>" % (hero_image, body)
+            # A <title> too: without one every Guardian article showed up as
+            # "Unknown" in calibre's own page metadata.
+            self._guardian_bodies[article_url] = (
+                "<html><head><title>%s</title></head><body>%s%s</body></html>"
+                % (xml_escape(item.get("webTitle", "")), hero_image, body)
+            )
             items.append({
                 "id": item.get("id", article_url),
                 "title": item.get("webTitle", ""),
@@ -628,6 +636,43 @@ class MorningBrief(BasicNewsRecipe):
     # file size/complexity regardless of which source causes it.
     MAX_IMAGES_PER_ARTICLE = 8
 
+    # Query parameters that only choose a size/crop/format of the same picture.
+    IMAGE_SIZE_PARAMS = {"w", "h", "width", "height", "quality", "q", "fit", "crop",
+                         "auto", "format", "fm", "scale", "dpr", "s", "resize", "blur"}
+
+    @classmethod
+    def image_key(cls, src):
+        """Identity of an image independent of its size/crop variant, or
+        None if it can't be told (data: URIs, empty src)."""
+        src = (src or "").strip()
+        if not src or src.startswith("data:"):
+            return None
+        parts = urllib.parse.urlparse(src)
+        path = re.sub(r"/cdn-cgi/image/[^/]+", "", parts.path)   # Cloudflare resizing prefix
+        query = sorted(
+            (k, v) for k, v in urllib.parse.parse_qsl(parts.query)
+            if k.lower() not in cls.IMAGE_SIZE_PARAMS
+        )
+        return (parts.netloc + path + "?" + urllib.parse.urlencode(query)).lower()
+
+    def drop_repeated_images(self, soup):
+        """Remove an image that already appeared in an earlier article (or
+        earlier in this one). A picture that shows up in several articles of
+        one brief is site furniture - a promo, a magazine cover, a sponsor
+        tile - not that article's photo; confirmed with The Economist's
+        weekly cover, which was the only "picture" in six Economist articles
+        of a single brief, and a video-promo still shared by two Athletic
+        articles. Reader complaint behind this: "repeats itself".
+        """
+        for img in soup.find_all("img"):
+            key = self.image_key(img.get("src"))
+            if not key:
+                continue
+            if key in self._seen_image_keys:
+                img.decompose()
+            else:
+                self._seen_image_keys.add(key)
+
     def preprocess_html(self, soup):
         # Inline SVGs are essentially always UI chrome (icon sprite sheets
         # with dozens of <symbol> definitions, social-share icons, etc.),
@@ -684,6 +729,8 @@ class MorningBrief(BasicNewsRecipe):
                 if value:
                     img["src"] = value.split()[0]
                     break
+
+        self.drop_repeated_images(soup)
 
         for img in soup.find_all("img")[self.MAX_IMAGES_PER_ARTICLE:]:
             img.decompose()
@@ -789,6 +836,25 @@ class MorningBrief(BasicNewsRecipe):
         haystack = " ".join((self.article_url(article), article.title or "")).lower()
         return any(marker in haystack for marker in self.LIVE_BLOG_MARKERS)
 
+    # Video, audio and podcast pages are not readable on a Kindle: the
+    # page is a player plus a playlist of every other clip on the site.
+    # Confirmed on real builds - a Kicker ".../video" page came through as
+    # a 2.8 MB "article" (917 <picture> tags, 1.9 MB of data-* attributes,
+    # ~34,000 characters of clip titles and durations), i.e. 50+ pages of
+    # unreadable list, and this happened in 5 of the 8 builds checked.
+    # Every one of them had "/video" as the last path segment of its URL
+    # (kicker.de/<slug>-<id>/video#omrss); NYT, Guardian and Economist use
+    # /video/, /audio/ and /podcasts/ the same way. Dropped before Claude
+    # ever sees the candidates, so these never use up a source's slots.
+    VIDEO_URL_RE = re.compile(r"/(?:video|videos|podcast|podcasts|audio)(?:[/?#.]|$)", re.IGNORECASE)
+    VIDEO_TITLE_RE = re.compile(
+        r"^\s*(?:im\s+video|video|watch|listen|podcast|livestream)\s*[:|\u2013\u2014-]", re.IGNORECASE
+    )
+
+    def is_video_page(self, feed, article):
+        path = urllib.parse.urlparse(self.article_url(article)).path
+        return bool(self.VIDEO_URL_RE.search(path) or self.VIDEO_TITLE_RE.match(article.title or ""))
+
     def parse_feeds(self):
         feeds = super().parse_feeds()
 
@@ -798,6 +864,14 @@ class MorningBrief(BasicNewsRecipe):
 
         for feed in feeds:
             feed.articles = [a for a in feed.articles if not self.is_live_blog(feed, a)]
+
+        skipped_video = 0
+        for feed in feeds:
+            kept = [a for a in feed.articles if not self.is_video_page(feed, a)]
+            skipped_video += len(feed.articles) - len(kept)
+            feed.articles = kept
+        if skipped_video:
+            self.log("Skipped %d video/podcast page(s)." % skipped_video)
 
         history = self.load_history()
         if history:
@@ -1118,8 +1192,27 @@ class MorningBrief(BasicNewsRecipe):
 
     # -- quality gate ---------------------------------------------------
 
-    def looks_broken(self, url, raw_html):
-        """True if this doesn't look like a real, readable article.
+    # Upper bounds on what counts as "an article". Normal pieces here are
+    # 15-20 KB of markup (the longest legitimate one seen - a 50-player
+    # NFL trade-deadline big board - was 36,000 characters / 87 KB); the
+    # video-player pages that kept slipping through were ~2.8 MB, with
+    # 34,000 characters that were almost all clip titles. A Kindle page
+    # holds roughly 1,500-2,000 characters, so 60,000 characters is already
+    # a ~30-page read.
+    MAX_ARTICLE_CHARS = 60000
+    MAX_ARTICLE_HTML_BYTES = 400000
+    # <img> + <picture> count of the *extracted* page, before the recipe's
+    # own MAX_IMAGES_PER_ARTICLE trim. Legitimate photo-heavy pieces were
+    # at ~155 (the NFL board, mostly lazy-load placeholders); the video
+    # playlist had 925.
+    MAX_MEDIA_ELEMENTS = 250
+    # Text as a share of markup: ~0.3-0.5 for real articles, 0.012 for the
+    # video playlist pages. Only applied to big pages.
+    MIN_TEXT_RATIO = 0.05
+
+    def unreadable_reason(self, url, raw_html):
+        """Why this doesn't look like a real, readable article, or None if
+        it does.
 
         Checked against the raw fetched page. Calling calibre's own
         readability extractor a second time here (outside the single-shot
@@ -1130,14 +1223,31 @@ class MorningBrief(BasicNewsRecipe):
         genuine paywalls are caught by name below rather than by length,
         since the surrounding nav/footer chrome pads a raw page past any
         length threshold regardless of how little article text it holds.
+        The size checks catch the opposite failure: a page that is far too
+        big to be one readable article (video players, playlists).
         """
         if not raw_html:
-            return True
+            return "empty page"
         text = re.sub(r"<[^>]+>", " ", raw_html)
         text = re.sub(r"\s+", " ", text).strip().lower()
         if len(text) < MIN_ARTICLE_CHARS:
-            return True
-        return any(marker in text for marker in BROKEN_CONTENT_MARKERS)
+            return "too short (%d characters)" % len(text)
+        for marker in BROKEN_CONTENT_MARKERS:
+            if marker in text:
+                return "paywall/bot-block marker %r" % marker
+        if len(raw_html) > self.MAX_ARTICLE_HTML_BYTES:
+            return "oversized page (%d KB of markup)" % (len(raw_html) // 1024)
+        if len(text) > self.MAX_ARTICLE_CHARS:
+            return "too long (%d characters)" % len(text)
+        media = len(re.findall(r"<(?:img|picture)\b", raw_html))
+        if media > self.MAX_MEDIA_ELEMENTS:
+            return "media playlist/gallery (%d images)" % media
+        if len(raw_html) > 100000 and len(text) / float(len(raw_html)) < self.MIN_TEXT_RATIO:
+            return "mostly markup, little text (%.1f%% text)" % (100.0 * len(text) / len(raw_html))
+        return None
+
+    def looks_broken(self, url, raw_html):
+        return self.unreadable_reason(url, raw_html) is not None
 
     def drop_unreadable_articles(self, feeds):
         """Fetch each surviving candidate once up front and drop the ones
@@ -1183,10 +1293,11 @@ class MorningBrief(BasicNewsRecipe):
                     self.log.warn("Quality check could not fetch %s: %s" % (url, err))
                     keep.append(article)
                     continue
-                if self.looks_broken(url, raw):
+                reason = self.unreadable_reason(url, raw)
+                if reason:
                     self.log.warn(
-                        "Dropping unreadable article: [%s] %s (%s)"
-                        % (feed.title, article.title, url)
+                        "Dropping unreadable article (%s): [%s] %s (%s)"
+                        % (reason, feed.title, article.title, url)
                     )
                 else:
                     keep.append(article)
@@ -1327,9 +1438,12 @@ class MorningBrief(BasicNewsRecipe):
             "longitude": self.WEATHER_LON,
             "current": "temperature_2m,weathercode",
             "hourly": "temperature_2m,precipitation_probability,precipitation,weathercode",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
+                     "precipitation_sum,weathercode,sunrise,sunset",
             "timezone": "Europe/Berlin",
-            "forecast_days": "2",
+            # 3 days so that on a Friday the weekend (Saturday + Sunday) is
+            # covered; the cover itself only ever uses today and tomorrow.
+            "forecast_days": "3",
         }
         url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
         try:
@@ -1356,6 +1470,17 @@ class MorningBrief(BasicNewsRecipe):
                     "sunset": daily["sunset"][0][-5:],
                 },
                 "hours": hours,
+                "days": [
+                    {
+                        "date": datetime.datetime.strptime(day, "%Y-%m-%d").date(),
+                        "high": daily["temperature_2m_max"][i],
+                        "low": daily["temperature_2m_min"][i],
+                        "rain_max": daily["precipitation_probability_max"][i],
+                        "mm": daily["precipitation_sum"][i],
+                        "code": daily["weathercode"][i],
+                    }
+                    for i, day in enumerate(daily["time"])
+                ],
             }
         except Exception as err:
             self.log.warn("Could not fetch weather: %s" % err)
@@ -1401,21 +1526,87 @@ class MorningBrief(BasicNewsRecipe):
             return "Small chance of rain (up to %d%%)" % peak
         return "No rain expected"
 
-    def weather_summary_line(self):
-        """One-line version for the front page (the cover has the full
-        hourly detail)."""
+    @staticmethod
+    def rain_intensity(mm_per_hour):
+        """Word for how hard it rains, from the standard meteorological
+        bands for hourly rainfall: under 2.5 mm/h light, 2.5-7.5 moderate,
+        above that heavy (and "drizzle" for the barely-there end)."""
+        if mm_per_hour < 0.5:
+            return "drizzle"
+        if mm_per_hour < 2.5:
+            return "light"
+        if mm_per_hour < 7.6:
+            return "moderate"
+        return "heavy"
+
+    @classmethod
+    def rain_detail(cls, hours, threshold=40):
+        """How much and how hard, for the hours where rain is likely:
+        {"label", "total", "peak", "peak_time"} or None if none is."""
+        wet = [h for h in hours if (h["rain"] or 0) >= threshold]
+        if not wet:
+            return None
+        peak = max(wet, key=lambda h: h["mm"] or 0)
+        return {
+            "label": cls.rain_intensity(peak["mm"] or 0),
+            "total": sum(h["mm"] or 0 for h in wet),
+            "peak": peak["mm"] or 0,
+            "peak_time": peak["dt"],
+        }
+
+    @staticmethod
+    def format_mm(mm):
+        return "under 0.1 mm" if mm < 0.1 else "%.1f mm" % mm
+
+    def rain_detail_text(self, hours):
+        """Second line under the cover's rain summary, e.g. "Moderate rain
+        - 6.2 mm in total - peak 2.8 mm/h at 14:00"; None when no rain is
+        likely."""
+        detail = self.rain_detail(hours)
+        if not detail:
+            return None
+        text = "%s rain  \u00b7  %s in total" % (detail["label"].capitalize(), self.format_mm(detail["total"]))
+        if detail["peak"] >= 0.1:
+            text += "  \u00b7  peak %.1f mm/h at %s" % (detail["peak"], detail["peak_time"].strftime("%H:%M"))
+        return text
+
+    def weekend_forecast_lines(self):
+        """Front-page weather: only on Fridays, and then the weekend
+        (Saturday and Sunday) - on every other day the front page carries
+        no weather at all (the cover already has today's). One line per
+        day, or None."""
+        now, _tz = self.berlin_now()
+        if now.weekday() != 4:
+            return None
         weather = self.fetch_weather()
         if not weather:
             return None
-        description = self.WMO_WEATHER_CODES.get(weather["current"].get("weathercode"), "")
-        today = weather["today"]
-        return "%s: %.0f°C%s. High %.0f°C / low %.0f°C. %s." % (
-            self.WEATHER_PLACE.split(",")[0],
-            weather["current"]["temperature_2m"],
-            " (%s)" % description if description else "",
-            today["high"], today["low"],
-            self.rain_summary(self.weather_hours_for_cover(weather)),
-        )
+        lines = []
+        for day in weather.get("days", []):
+            if day["date"].weekday() not in (5, 6):
+                continue
+            waking = [h for h in weather["hours"]
+                      if h["dt"].date() == day["date"] and 7 <= h["dt"].hour <= 22]
+            # The day's sky ("overcast", "partly cloudy") only when it isn't
+            # a precipitation code: for a wet day the rain summary below says
+            # it, with amounts, and a second label ("heavy rain" next to
+            # "moderate, 9 mm") could contradict it.
+            sky = self.WMO_WEATHER_CODES.get(day["code"], "") if day["code"] < 51 else ""
+            parts = [
+                "%s %s: %.0f\u00b0C / %.0f\u00b0C%s." % (
+                    day["date"].strftime("%A"),
+                    day["date"].strftime("%d %b").lstrip("0"),
+                    day["high"], day["low"],
+                    ", " + sky if sky else "",
+                )
+            ]
+            summary = self.rain_summary(waking)
+            detail = self.rain_detail(waking)
+            if detail:
+                summary += " - %s, %s in total" % (detail["label"], self.format_mm(detail["total"]))
+            parts.append(summary + ".")
+            lines.append(" ".join(parts))
+        return lines or None
 
     # -- cover ------------------------------------------------------------
 
@@ -1515,24 +1706,30 @@ class MorningBrief(BasicNewsRecipe):
             d.text((430, 670), "Sunrise %s   Sunset %s" % (today["sunrise"], today["sunset"]), font=self.cover_font(self.COVER_SANS, 34), fill=grey)
 
             summary = self.rain_summary(rows)
+            detail_text = self.rain_detail_text(rows)
             rain_font = self.cover_font(self.COVER_SANS_BOLD, 44)
             raining = summary.startswith("Rain likely")
-            box_top, box_bottom = 730, 810
+            # Taller box when there is a second line (how hard / how much).
+            box_top, box_bottom = 725, 870 if detail_text else 805
             if raining:
                 d.rectangle([M, box_top, W - M, box_bottom], outline=ink, width=5)
-            centered(summary, box_top + 16, fit(summary, 0, self.COVER_SANS_BOLD, 44, W - 2 * M - 40), ink if raining else grey)
+            centered(summary, box_top + 14, fit(summary, 0, self.COVER_SANS_BOLD, 44, W - 2 * M - 40), ink if raining else grey)
+            if detail_text:
+                centered(detail_text, box_top + 78, fit(detail_text, 0, self.COVER_SANS, 36, W - 2 * M - 40), ink)
+            table_top = box_bottom + 40
 
         # Hourly table
         if rows:
-            y = 855
+            y = table_top
             head = self.cover_font(self.COVER_SANS_BOLD, 26)
             d.text((M, y), "HOUR", font=head, fill=grey)
             d.text((300 - text_w("TEMP", head), y), "TEMP", font=head, fill=grey)
             d.text((335, y), "CONDITIONS", font=head, fill=grey)
-            d.text((715, y), "RAIN CHANCE", font=head, fill=grey)
+            d.text((690, y), "RAIN CHANCE", font=head, fill=grey)
+            d.text((W - M - text_w("AMOUNT", head), y), "AMOUNT", font=head, fill=grey)
             d.rectangle([M, y + 38, W - M, y + 40], fill=ink)
             y += 52
-            row_h = 50
+            row_h = 47
             hour_font = self.cover_font(self.COVER_SANS_BOLD, 34)
             temp_font = self.cover_font(self.COVER_SANS, 34)
             cond_font = self.cover_font(self.COVER_SANS, 30)
@@ -1563,13 +1760,19 @@ class MorningBrief(BasicNewsRecipe):
                 while cond and text_w(cond, cond_font) > 350:
                     cond = cond[:-2]
                 d.text((335, y + 3), cond, font=cond_font, fill=grey if not wet else ink)
-                bar_x, bar_w, bar_h = 715, 290, 30
+                # chance bar + percentage, then the expected amount (mm in
+                # that hour) so "likely" can be told apart from "pouring"
+                bar_x, bar_w, bar_h = 690, 170, 30
                 d.rectangle([bar_x, y + 4, bar_x + bar_w, y + 4 + bar_h], outline=ink, width=2)
                 fill_w = int(bar_w * prob / 100)
                 if fill_w:
                     d.rectangle([bar_x, y + 4, bar_x + fill_w, y + 4 + bar_h], fill=ink if wet else (130, 130, 130))
                 pct = "%d%%" % prob
-                d.text((W - M - text_w(pct, pct_font), y), pct, font=pct_font, fill=ink)
+                d.text((bar_x + bar_w + 15, y), pct, font=pct_font, fill=ink)
+                mm = h["mm"] or 0
+                amount = "%.1f mm" % mm if mm >= 0.1 else "\u2013"
+                d.text((W - M - text_w(amount, pct_font), y), amount, font=pct_font,
+                       fill=ink if mm >= 0.1 else (150, 150, 150))
                 y += row_h
 
         # Footer
@@ -1676,8 +1879,8 @@ class MorningBrief(BasicNewsRecipe):
             else:
                 self.log.warn("Could not rewrite front-page link for feed_%d (%s)" % (i, feed.title))
 
-        weather = self.weather_summary_line()
-        if weather:
+        weekend = self.weekend_forecast_lines()
+        if weekend:
             # Matching on class="calibre4" seemed natural (that's what
             # this paragraph showed when first inspected) but is wrong -
             # confirmed directly: calibre reassigns its own auto-generated
@@ -1690,16 +1893,20 @@ class MorningBrief(BasicNewsRecipe):
             # it's baked into this exact paragraph via timefmt, unique to
             # this build, and never touched by calibre's own class
             # renumbering, since it's text content, not a class name.
+            block = '<p class="weather-report"><b>Weekend weather - %s</b><br/>%s</p>' % (
+                xml_escape(self.WEATHER_PLACE.split(",")[0]),
+                "<br/>".join(xml_escape(line) for line in weekend),
+            )
             new_page_html, count = re.subn(
                 r'(<p\b[^>]*>[^<]*%s[^<]*</p>)' % re.escape(RECIPE_VERSION),
-                lambda m: m.group(1) + '<p class="weather-report">%s</p>' % xml_escape(weather),
+                lambda m: m.group(1) + block,
                 page_html, count=1,
             )
             if count:
                 page_html = new_page_html
                 changed = True
             else:
-                self.log.warn("Could not inject weather into front page (date paragraph not found).")
+                self.log.warn("Could not inject the weekend forecast into the front page (date paragraph not found).")
 
         if changed:
             try:

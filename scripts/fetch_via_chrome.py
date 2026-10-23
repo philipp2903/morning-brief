@@ -50,16 +50,101 @@ COOKIE_CONSENT_SELECTORS = [
     "button:has-text('I accept')",
 ]
 
+#
+# Images are the part Readability gets wrong most often, in two ways that
+# were both confirmed on real pages:
+#   1. It keeps small widgets that sit inside the article container - e.g.
+#      The Economist's 192px-wide "read the magazine" cover tile, which then
+#      became the ONLY image in every Economist article (the same weekly
+#      cover six times in one brief), and video-player thumbnails on The
+#      Athletic. Because the article then "had an image", the og:image
+#      fallback below never fired.
+#   2. It drops the real lead photo whenever the site puts it in the page
+#      header, outside the article body (The Economist and The Athletic).
+# So: drop images that are visibly small on the live page or that sit inside
+# a video player, and put the page's own og:image (the lead image the
+# publisher picked for link previews) on top unless the article body already
+# starts with that image. Widths are measured on the live page, which is the
+# one place they're known for certain - Readability only sees a DOM clone.
 EXTRACT_SCRIPT = """
 () => {
+    const MIN_RENDERED_WIDTH = 240;   // px; smaller is an icon/avatar/widget tile
+    const LEAD_TEXT_LIMIT = 250;      // chars of text allowed before the first image
+    const PLAYER = 'video, [class*="video" i], [id*="video" i], [data-testid*="video" i], '
+                 + '[aria-label*="video" i], [class*="player" i], [id*="player" i]';
+
     const clone = document.cloneNode(true);
     const article = new Readability(clone).parse();
     if (!article || !article.content) return null;
-    const ogImage = document.querySelector('meta[property="og:image"]');
+    const ogEl = document.querySelector('meta[property="og:image"]');
+    const ogImage = ogEl ? ogEl.content : '';
+
+    // A real video widget is small; a wrapper that merely has "video" in a
+    // class name but holds the whole article is not a player.
+    const inPlayer = (el) => {
+        let node = el.parentElement;
+        for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+            if (['BODY', 'MAIN', 'ARTICLE', 'HTML'].includes(node.tagName)) return false;
+            if (node.matches(PLAYER) && (node.innerText || '').length < 600) return true;
+        }
+        return false;
+    };
+
+    const live = new Map();
+    for (const el of document.querySelectorAll('img')) {
+        const info = {width: el.getBoundingClientRect().width, player: inPlayer(el)};
+        for (const s of [el.currentSrc, el.src, el.getAttribute('src')]) {
+            if (s && !live.has(s)) live.set(s, info);
+        }
+    }
+
+    const doc = new DOMParser().parseFromString('<!doctype html><body>' + article.content, 'text/html');
+    for (const img of doc.querySelectorAll('img')) {
+        const info = live.get(img.getAttribute('src')) || live.get(img.src);
+        if (!info) continue;
+        if (info.player || (info.width > 0 && info.width < MIN_RENDERED_WIDTH)) {
+            const holder = img.closest('picture') || img;
+            holder.remove();
+        }
+    }
+    for (const fig of doc.querySelectorAll('figure')) {
+        if (!fig.querySelector('img') && !(fig.textContent || '').trim()) fig.remove();
+    }
+
+    // Same picture under a different size/crop name (NYT articleLarge vs
+    // facebookJumbo, WordPress -1024x683 vs -scaled, ...): compare stems.
+    const VARIANT = /[-_](scaled|articlelarge|facebookjumbo|superjumbo|jumbo|videolarge|threebytwo\\d*|mediumthreebytwo\\d*|thumbstandard|thumblarge|square\\d*|master\\d*|\\d+x\\d+)$/i;
+    const stem = (raw) => {
+        if (!raw) return '';
+        let url;
+        try { url = new URL(raw, location.href); } catch (e) { return ''; }
+        const inner = url.searchParams.get('url');   // Next.js /_next/image?url=...
+        let path = inner ? inner.split('?')[0] : url.pathname;
+        let base = '';
+        try { base = decodeURIComponent(path.split('/').pop() || ''); } catch (e) { base = path.split('/').pop() || ''; }
+        base = base.replace(/\\.[a-z0-9]{2,4}$/i, '').toLowerCase();
+        while (VARIANT.test(base)) base = base.replace(VARIANT, '');
+        return base;
+    };
+    const ogStem = stem(ogImage);
+    const images = [...doc.querySelectorAll('img')];
+    const sameAsOg = (s) => s && ogStem && (s === ogStem
+        || (s.length >= 8 && ogStem.length >= 8 && (s.startsWith(ogStem) || ogStem.startsWith(s))));
+    const hasOgImage = images.some((i) => sameAsOg(stem(i.getAttribute('src'))));
+
+    let leadsWithImage = false;
+    if (images.length) {
+        const range = doc.createRange();
+        range.setStart(doc.body, 0);
+        range.setEndBefore(images[0]);
+        leadsWithImage = range.toString().replace(/\\s+/g, ' ').trim().length < LEAD_TEXT_LIMIT;
+    }
+
     return {
         title: article.title || '',
-        content: article.content,
-        ogImage: ogImage ? ogImage.content : '',
+        content: doc.body.innerHTML,
+        ogImage: ogImage,
+        needsHero: !!ogImage && !hasOgImage && !leadsWithImage,
     };
 }
 """
@@ -192,9 +277,12 @@ def main():
             if article:
                 content = article["content"]
                 og_image = article.get("ogImage", "")
-                if "<img" not in content and og_image:
-                    # Fallback hero image when Readability's own
-                    # extraction found none - confirmed on two separate
+                if og_image and (article.get("needsHero") or "<img" not in content):
+                    # Hero image when the article body doesn't already
+                    # start with it (see EXTRACT_SCRIPT for the two ways
+                    # Readability gets this wrong). Originally this was
+                    # only a fallback for "Readability found no image at
+                    # all" - confirmed on two separate
                     # real sites (Tagesspiegel and The Athletic) that
                     # this isn't rare: both had a real photo already
                     # sitting in <head> as og:image (the near-universal
