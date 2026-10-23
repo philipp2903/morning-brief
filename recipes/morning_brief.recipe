@@ -1197,9 +1197,10 @@ class MorningBrief(BasicNewsRecipe):
     # NFL trade-deadline big board - was 36,000 characters / 87 KB); the
     # video-player pages that kept slipping through were ~2.8 MB, with
     # 34,000 characters that were almost all clip titles. A Kindle page
-    # holds roughly 1,500-2,000 characters, so 60,000 characters is already
-    # a ~30-page read.
-    MAX_ARTICLE_CHARS = 60000
+    # holds roughly 1,500-2,000 characters, so 70,000 characters is already
+    # a ~35-page read. (Raised from 60,000 at the reader's request after a
+    # 65,000-character ESPN essay was dropped.)
+    MAX_ARTICLE_CHARS = 70000
     MAX_ARTICLE_HTML_BYTES = 400000
     # <img> + <picture> count of the *extracted* page, before the recipe's
     # own MAX_IMAGES_PER_ARTICLE trim. Legitimate photo-heavy pieces were
