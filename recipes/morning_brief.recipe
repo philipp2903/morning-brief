@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import unescape as html_unescape
 from xml.sax.saxutils import escape as xml_escape
 
 from calibre.web.feeds import Feed
@@ -452,6 +453,8 @@ class MorningBrief(BasicNewsRecipe):
         # pre-check and the real download so each article only costs one
         # Chrome navigation, not two.
         self._chrome_fetch_cache = {}
+        # url -> the headline shown in the front-page index (see add_headline).
+        self._article_titles = {}
         # Image identities already used by an earlier article in this
         # build - see drop_repeated_images().
         self._seen_image_keys = set()
@@ -599,16 +602,51 @@ class MorningBrief(BasicNewsRecipe):
 
     def preprocess_raw_html(self, raw_html, url):
         if url in self._guardian_bodies:
-            return self._guardian_bodies[url]
+            return self.add_headline(self._guardian_bodies[url], url)
         # Calibre's own webengine fetch already ran (and, for NYT/
         # Economist, got blocked) by the time this hook fires - throw it
         # away and use the real-Chrome + Readability path instead.
         if self.needs_chrome_fetch(url):
             try:
-                return self.fetch_via_chrome(url)
+                return self.add_headline(self.fetch_via_chrome(url), url)
             except Exception as err:
                 self.log.warn("Chrome CDP fetch failed for %s: %s" % (url, err))
         return raw_html
+
+    @staticmethod
+    def _headline_key(text):
+        return re.sub(r"\W+", " ", html_unescape(text or "")).strip().lower()
+
+    def add_headline(self, page_html, url):
+        """Put the article's headline at the top of the page.
+
+        Readability hands the title back separately from the article body
+        and the body never contains it (the Guardian API body has none
+        either), so every article started straight with its first
+        paragraph - the headline only existed in the front-page index and
+        the page <title>, which a reader never sees. Reported by the
+        reader as "many articles are inserted without a headline. that
+        gets very confusing"; checked on a real build: 41 of 41 articles
+        had none. Uses the exact headline the index shows (the feed's
+        title), falling back to the page's own <title>. Skipped when the
+        body already opens with a matching heading.
+        """
+        title = self._article_titles.get(url)
+        if not title:
+            match = re.search(r"<title>(.*?)</title>", page_html, re.S | re.I)
+            title = html_unescape(match.group(1)).strip() if match else ""
+        if not title or title.lower() == "unknown":
+            return page_html
+        body = re.search(r"<body[^>]*>", page_html, re.I)
+        start = body.end() if body else 0
+        opening = re.search(r"<h[1-3]\b[^>]*>(.*?)</h[1-3]>", page_html[start:start + 3000], re.S | re.I)
+        if opening:
+            existing = self._headline_key(re.sub(r"<[^>]+>", "", opening.group(1)))
+            wanted = self._headline_key(title)
+            if existing and wanted and (existing[:25] == wanted[:25]):
+                return page_html
+        heading = '<h1 class="article-headline">%s</h1>' % xml_escape(title)
+        return page_html[:start] + heading + page_html[start:]
 
     @staticmethod
     def strip_athletic_nav_chrome(raw_html):
@@ -958,6 +996,11 @@ class MorningBrief(BasicNewsRecipe):
         # see the *finished* state once that's happened. See cleanup() for
         # why this can't be done in feeds2index() itself.
         self._final_feeds = surviving
+        self._article_titles = {
+            self.article_url(a): a.title
+            for f in surviving for a in f.articles
+            if self.article_url(a) and a.title
+        }
         return surviving
 
     def fetch_vote_feedback(self):
