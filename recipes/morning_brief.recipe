@@ -173,7 +173,11 @@ SOURCE_ROLES = {
         "Skip gift guides, restaurant, travel and ski listings, event "
         "round-ups, shopping and deal pieces, lifestyle, human-interest "
         "fluff and crime-blotter items. Prefer a piece that explains "
-        "what is happening and why over a short news item."),
+        "what is happening and why over a short news item. Spread the "
+        "slots across the region (San Francisco and Oakland as much as "
+        "Santa Clara County) and across the three outlets rather than "
+        "taking every pick from one county or one feed - an earlier "
+        "build gave all four to San Jose Spotlight."),
     "Sportschau": (3,
         "German sport generally (not just football). Only when the story "
         "is genuinely interesting: a manager sacked, a club in financial "
