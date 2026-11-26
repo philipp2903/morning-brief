@@ -363,6 +363,95 @@ Rules:
   first."""
 
 
+# -- article navigation bar ----------------------------------------------
+#
+# Calibre puts a small monospace bar at the TOP of every article ("Next |
+# Section menu | Main menu | Previous" - note: Previous on the right) and a
+# second, link-poor one at the bottom ("Section menu | Main menu"). On a
+# Kindle that is the wrong way round for one-handed reading: you reach the
+# end of the article with your thumb, and Previous/Next sit at the far side
+# of the page. rebuild_navbars() removes the top bar and replaces the
+# bottom one with a large bar: Previous on the left, Next on the right.
+NAVBAR_RE = re.compile(r'<div class="calibre_navbar"[^>]*>.*?</div>\s*', re.S)
+NAV_LINK_RE = re.compile(r'<a\b([^>]*)>(.*?)</a>', re.S)
+
+
+def _html_attr(attrs, name):
+    match = re.search(r'\b%s="([^"]*)"' % name, attrs)
+    return match.group(1) if match else None
+
+
+def _nav_target_exists(file_path, href):
+    target = os.path.normpath(os.path.join(os.path.dirname(file_path), href.split("#")[0]))
+    return os.path.isfile(target)
+
+
+def rebuild_navbars(page_html, file_path):
+    """The article page with calibre's two navigation bars replaced by one
+    thumb-friendly bar at the end, or None if this isn't a page with calibre's
+    usual pair of bars (section and front pages are left alone).
+
+    Next on a section's last article points at the next section's index
+    page (calibre's own behaviour); Previous on a section's first article is
+    added here, pointing at the previous section's index page. Links to
+    pages that don't exist are dropped - calibre links the very last
+    article's Next to a section that isn't there.
+    """
+    bars = list(NAVBAR_RE.finditer(page_html))
+    if len(bars) != 2:
+        return None
+    top, bottom = bars
+    links = {}
+    for match in NAV_LINK_RE.finditer(top.group(0) + bottom.group(0)):
+        attrs = match.group(1)
+        label = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+        href, rel = _html_attr(attrs, "href"), _html_attr(attrs, "rel")
+        if rel == "articlenextlink":
+            links["next"] = href
+        elif rel == "articleprevlink":
+            links["prev"] = href
+        elif label == "Section menu":
+            links["section"] = href
+        elif label == "Main menu":
+            links["main"] = href
+    if "section" not in links or "main" not in links:
+        return None
+
+    if not links.get("prev"):
+        feed = re.search(r"feed_(\d+)", file_path)
+        if feed and int(feed.group(1)) > 0:
+            links["prev"] = "../../feed_%d/index.html" % (int(feed.group(1)) - 1)
+    for key in ("prev", "next"):
+        if links.get(key) and not _nav_target_exists(file_path, links[key]):
+            links[key] = None
+
+    def side(href, text, section_text, align):
+        if not href:
+            return '<td style="width:36%%;text-align:%s"></td>' % align
+        label = section_text if "/feed_" in href else text
+        return (
+            '<td style="width:36%%;text-align:%s;padding:0.8em 0">'
+            '<a href="%s" style="font-weight:bold;font-size:1.3em">%s</a></td>'
+            % (align, xml_escape(href, {'"': "&quot;"}), label)
+        )
+
+    middle = (
+        '<td style="width:28%%;text-align:center;padding:0.8em 0;font-size:0.85em">'
+        '<a href="%s">Section menu</a><br/><a href="%s">Main menu</a></td>'
+        % (xml_escape(links["section"], {'"': "&quot;"}), xml_escape(links["main"], {'"': "&quot;"}))
+    )
+    bar = (
+        '<div style="margin-top:2em;border-top:2px solid black">'
+        '<table style="width:100%%;border-collapse:collapse"><tr>%s%s%s</tr></table></div>'
+        % (side(links.get("prev"), "&#171; Previous", "&#171; Prev. section", "left"),
+           middle,
+           side(links.get("next"), "Next &#187;", "Next section &#187;", "right"))
+    )
+    # Bottom bar first (its offsets are later in the page), then the top one.
+    result = page_html[:bottom.start()] + bar + page_html[bottom.end():]
+    return result[:top.start()] + result[top.end():]
+
+
 class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
     description = (
@@ -2055,6 +2144,31 @@ class MorningBrief(BasicNewsRecipe):
                 self.log.warn("Could not write rewritten front page: %s" % err)
 
         self.strip_calibre_attribution()
+        self.rework_navbars()
+
+    def rework_navbars(self):
+        """Apply rebuild_navbars() to every downloaded article page."""
+        changed = 0
+        for root, _dirs, files in os.walk(self.output_dir):
+            if not re.search(r"feed_\d+[/\\]article_\d+", root):
+                continue
+            for name in files:
+                if not name.endswith((".html", ".xhtml")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        page_html = handle.read()
+                    rebuilt = rebuild_navbars(page_html, path)
+                    if rebuilt is None:
+                        continue
+                    with open(path, "w", encoding="utf-8") as handle:
+                        handle.write(rebuilt)
+                    changed += 1
+                except Exception as err:
+                    self.log.warn("Could not rework the navigation bar in %s: %s" % (path, err))
+        if changed:
+            self.log("Replaced the navigation bars in %d article page(s)." % changed)
 
     # Calibre appends a standard "This article was downloaded by calibre
     # from <url>" line to the bottom of every single article, regardless of
