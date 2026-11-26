@@ -51,12 +51,21 @@ Kassel and the ice hockey club Kassel Huskies) - wanted out of personal
 attachment rather than analytic relevance, so it is not ranked against the
 priorities above; it simply gets its own slots.
 
+Three more areas of personal interest also get fixed slots of their own
+rather than competing in the ranking above: the NFL (followed more closely
+than any other US sport - the NFL group is deliberately bigger than the
+NBA/MLS one), technology news (AI above all, for a consultant working on
+enterprise AI adoption), and the San Francisco Bay Area (local news and
+policy, and how Silicon Valley's economy plays out in the region).
+
 Reader is a paying subscriber to The Economist, The New York Times (which
 covers The Athletic), and Tagesspiegel Plus - subscription content from
 those three is fully accessible and should be used freely, not treated as
-harder to reach than the free sources. The Guardian, Quanta and the Kassel
-desk (HNA) are free sources; they exist to fill gaps the paid sources
-don't cover, not to compete with them.
+harder to reach than the free sources. The Guardian, Quanta, the Kassel
+desk (HNA), the Bay Area sources (KQED, SFGate, San Jose Spotlight), the
+tech sources other than NYT (Ars Technica, The Verge, TechCrunch, MIT
+Technology Review) and CBS/Yahoo Sports are free sources; they exist to
+fill gaps the paid sources don't cover, not to compete with them.
 
 Never ship a snippet or a paywall teaser as if it were the full article -
 if a source only gives a partial preview, it does not belong in the brief
@@ -102,9 +111,22 @@ SOURCE_ROLES = {
         "extra - don't let economics/business crowd it out every day."),
     "NYT": (6,
         "US politics and business; foreign affairs the US is driving; "
-        "its Technology section; plus its Opinion section. Prefer "
-        "consequence over process: what a decision changes, not who "
-        "said what about it."),
+        "plus its Opinion section (its Technology section has moved to "
+        "the Tech group below). Prefer consequence over process: what a "
+        "decision changes, not who said what about it."),
+    "Tech": (5,
+        "A technology section: AI and what it means for business "
+        "(adoption inside companies, the economics of the labs and chip "
+        "makers, regulation), the big tech companies' strategic moves, "
+        "semiconductors, cybersecurity and infrastructure, and startups "
+        "or funding only when they signal something larger. Feeds: NYT "
+        "Technology (reported depth), Ars Technica (technical depth), "
+        "The Verge, TechCrunch and MIT Technology Review. Prefer "
+        "mechanism and consequence over product news. Skip gadget "
+        "reviews and \"best X\" lists, deals, rumour round-ups, gaming "
+        "and entertainment news, and press-release-style funding "
+        "announcements. Never duplicate a story already picked from the "
+        "Economist or NYT (see ALREADY SELECTED)."),
     "Guardian": (4,
         "International business and foreign affairs (free, supplementary) "
         "- only for stories genuinely not already well covered by what's "
@@ -139,6 +161,19 @@ SOURCE_ROLES = {
         "pure match previews, amateur/youth sport other than the two named "
         "clubs, and festival, crime-blotter or human-interest fluff without "
         "wider local significance."),
+    "Bay Area": (4,
+        "News from the San Francisco Bay Area (San Francisco, Oakland, "
+        "San Jose, Silicon Valley) from KQED, SFGate and San Jose "
+        "Spotlight, all free. Local politics and policy (city hall, "
+        "housing and zoning, transit, ballot measures), the regional "
+        "economy and the tech industry's footprint on it (layoffs, "
+        "big-company decisions, real estate), infrastructure, and "
+        "climate, wildfire or earthquake stories when they are "
+        "significant. Public safety only when it has policy weight. "
+        "Skip gift guides, restaurant, travel and ski listings, event "
+        "round-ups, shopping and deal pieces, lifestyle, human-interest "
+        "fluff and crime-blotter items. Prefer a piece that explains "
+        "what is happening and why over a short news item."),
     "Sportschau": (3,
         "German sport generally (not just football). Only when the story "
         "is genuinely interesting: a manager sacked, a club in financial "
@@ -158,16 +193,30 @@ SOURCE_ROLES = {
         "federation/league policy or structural decision (e.g. a DFB "
         "ruling, a league-format reform), or a club dispute all count, "
         "not only sackings and title races."),
-    "Athletic": (5,
-        "US sport (NFL, NBA, MLS), in-depth: analysis and reported "
-        "features, the sport-desk equivalent of the long-read bar this "
-        "brief holds international sources to elsewhere."),
-    "ESPN": (2,
-        "US sport (NFL, NBA) quick news: scores, trades, injuries "
-        "when they actually matter and The Athletic hasn't already "
-        "covered them in more depth (see ALREADY SELECTED). Same bar as "
-        "Sportschau/Kicker: genuinely interesting, not routine game "
-        "recaps or previews."),
+    "NFL": (6,
+        "The NFL, which the reader follows more closely than any other "
+        "US sport. Four feeds: The Athletic (analysis and reported "
+        "features - the best of the four, prefer it when it covers the "
+        "same story), ESPN (news, trades, injuries), CBS Sports and "
+        "Yahoo Sports (broad news). Aim for a real mix of the week's "
+        "storylines: an analysis or feature piece (scheme, coaching, "
+        "front office, why a team is winning or failing), the day's "
+        "biggest news (a trade, a firing, a star's injury or contract, "
+        "a turn in the playoff race) and the occasional strong game "
+        "analysis. Skip betting, odds, picks and prediction pieces "
+        "(CBS is full of them, often with promo codes), fantasy "
+        "football, live game threads, inactives lists, \"where to "
+        "watch\", power-ranking filler and bare score recaps. Never "
+        "pick two pieces on the same story."),
+    "Athletic": (3,
+        "US sport other than the NFL (NBA, MLS), in-depth: analysis and "
+        "reported features, the sport-desk equivalent of the long-read "
+        "bar this brief holds international sources to elsewhere."),
+    "ESPN": (1,
+        "NBA quick news: trades and injuries when they actually matter "
+        "and The Athletic hasn't already covered them in more depth "
+        "(see ALREADY SELECTED). Same bar as Sportschau/Kicker: "
+        "genuinely interesting, not routine game recaps or previews."),
     "Quanta": (2, "Properly substantial science or mathematics background reads (free)."),
 }
 
@@ -317,9 +366,9 @@ Rules:
 class MorningBrief(BasicNewsRecipe):
     title = "Morning Brief"
     description = (
-        "A curated selection from The Economist, NYT, The Guardian, "
-        "Tagesspiegel, HNA (Kassel), Sportschau, Kicker, ESPN, The Athletic and "
-        "Quanta"
+        "A curated selection from The Economist, NYT, tech sources, The "
+        "Guardian, Tagesspiegel, HNA (Kassel), Bay Area news, Sportschau, "
+        "Kicker, the NFL, ESPN, The Athletic and Quanta"
     )
     __author__ = "Philipp Schett"
     publication_type = "newspaper"
@@ -394,11 +443,20 @@ class MorningBrief(BasicNewsRecipe):
         ("NYT - Economy", "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"),
         ("NYT - Politics", "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"),
         ("NYT - World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
-        ("NYT - Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
         # Opinion, per the reader's own request for more of it. HomePage was
         # dropped: it's just a mix of the other NYT section feeds already
         # covered individually, adding volume without a distinct role.
         ("NYT - Opinion", "https://rss.nytimes.com/services/xml/rss/nyt/Opinion.xml"),
+        # Technology section: NYT Technology moved here from the NYT group.
+        # The four others are free and were each checked through the Chrome
+        # pipeline for full-text articles (2-10k chars, no paywall). Left
+        # out after the same check: Wired (articles came back as ~1k-char
+        # teasers) and the SF Standard (empty bodies).
+        ("Tech - NYT Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
+        ("Tech - Ars Technica", "https://feeds.arstechnica.com/arstechnica/index"),
+        ("Tech - The Verge", "https://www.theverge.com/rss/index.xml"),
+        ("Tech - TechCrunch", "https://techcrunch.com/feed/"),
+        ("Tech - MIT Technology Review", "https://www.technologyreview.com/feed/"),
         # Berlin news, and Berlin-relevant opinion. "Home" used to be a feed
         # here too, but it mixes in general entertainment/culture wire
         # content (confirmed directly: a US politics story about Erika
@@ -420,6 +478,14 @@ class MorningBrief(BasicNewsRecipe):
         ("Kassel - Baunatal", "https://www.hna.de/lokales/kreis-kassel/baunatal-ort312516/rssfeed.rdf"),
         ("Kassel - KSV Hessen Kassel", "https://www.hna.de/sport/ksv-hessen-kassel/rssfeed.rdf"),
         ("Kassel - Huskies", "https://www.hna.de/sport/kassel-huskies/rssfeed.rdf"),
+        # San Francisco Bay Area. All free and full-text through the Chrome
+        # pipeline (checked). Not usable from here: Mission Local, The
+        # Oaklandside, SF Chronicle and Mercury News all return 403 to feed
+        # requests; the SF Standard's feed works but its article bodies come
+        # back empty.
+        ("Bay Area - KQED", "https://ww2.kqed.org/news/feed/"),
+        ("Bay Area - SFGate", "https://www.sfgate.com/rss/feed/Bay-Area-News-429.php"),
+        ("Bay Area - San Jose Spotlight", "https://sanjosespotlight.com/feed/"),
         ("Sportschau - Alle Sportarten", "https://www.sportschau.de/index~rss2.xml"),
         # Kicker's own site is Cloudflare/DataDome-walled like NYT/Economist
         # (routes through the Chrome CDP fetcher, logged-in session, same as
@@ -429,14 +495,19 @@ class MorningBrief(BasicNewsRecipe):
         # football-specific feed on kicker.de, so the "mostly football"
         # split is enforced in the selection prompt, not the feed URL.
         ("Kicker - Alle Sportarten", "https://newsfeed.kicker.de/news/aktuell"),
-        ("ESPN - NFL", "https://www.espn.com/espn/rss/nfl/news"),
+        # NFL: its own group (see SOURCE_ROLES["NFL"]). CBS Sports and Yahoo
+        # are broad and free; both carry a lot of betting picks and fantasy
+        # content, which the selection prompt filters, not the feed URL.
+        ("NFL - Athletic", "https://www.nytimes.com/athletic/rss/nfl/"),
+        ("NFL - ESPN", "https://www.espn.com/espn/rss/nfl/news"),
+        ("NFL - CBS Sports", "https://www.cbssports.com/rss/headlines/nfl/"),
+        ("NFL - Yahoo Sports", "https://sports.yahoo.com/nfl/rss/"),
         ("ESPN - NBA", "https://www.espn.com/espn/rss/nba/news"),
         # theathletic.com's own domain sits behind Cloudflare like FT did;
         # The Athletic is owned by NYT and hosted under nytimes.com/athletic/
         # instead, which is why these use that domain - CHROME_FETCH_DOMAINS
         # already covers it, and the NYT login session doubles as Athletic
         # access (NYT All Access includes it).
-        ("Athletic - NFL", "https://www.nytimes.com/athletic/rss/nfl/"),
         ("Athletic - NBA", "https://www.nytimes.com/athletic/rss/nba/"),
         ("Athletic - MLS", "https://www.nytimes.com/athletic/rss/mls/"),
         ("Quanta - Articles", "https://api.quantamagazine.org/feed/"),
@@ -1747,12 +1818,31 @@ class MorningBrief(BasicNewsRecipe):
             cur = weather["current"]
             today = weather["today"]
             rows = self.weather_hours_for_cover(weather)
-            description = self.WMO_WEATHER_CODES.get(cur.get("weathercode"), "")
-            d.text((M, 520), "%.0f°" % cur["temperature_2m"], font=self.cover_font(self.COVER_SERIF_BOLD, 150), fill=ink)
-            right = self.cover_font(self.COVER_SANS, 40)
-            d.text((430, 540), description.capitalize(), font=self.cover_font(self.COVER_SERIF_BOLD, 54), fill=ink)
-            d.text((430, 615), "High %.0f°   Low %.0f°" % (today["high"], today["low"]), font=right, fill=ink)
-            d.text((430, 670), "Sunrise %s   Sunset %s" % (today["sunrise"], today["sunset"]), font=self.cover_font(self.COVER_SANS, 34), fill=grey)
+            # The day's own sky (most significant weather of the day), not
+            # the 04:00 reading: at the usual build time "current" is the
+            # middle of the night.
+            days = weather.get("days") or []
+            code = days[0]["code"] if days else cur.get("weathercode")
+            description = self.WMO_WEATHER_CODES.get(code, "")
+
+            # Daily high and low, large - what the reader actually plans
+            # the day around. (This used to be the current temperature,
+            # which at 04:00 says nothing about the day.)
+            label = self.cover_font(self.COVER_SANS_BOLD, 30)
+            big = self.cover_font(self.COVER_SERIF_BOLD, 150)
+            low_x = M + 345
+            d.text((M, 520), "HIGH", font=label, fill=grey)
+            d.text((low_x, 520), "LOW", font=label, fill=grey)
+            d.text((M, 538), "%.0f\u00b0" % today["high"], font=big, fill=ink)
+            d.text((low_x, 538), "%.0f\u00b0" % today["low"], font=big, fill=ink)
+
+            info_x = M + 690
+            info_w = W - M - info_x
+            d.text((info_x, 548), description.capitalize(),
+                   font=fit(description.capitalize(), 0, self.COVER_SERIF_BOLD, 44, info_w), fill=ink)
+            small = self.cover_font(self.COVER_SANS, 34)
+            d.text((info_x, 612), "Sunrise %s" % today["sunrise"], font=small, fill=grey)
+            d.text((info_x, 657), "Sunset %s" % today["sunset"], font=small, fill=grey)
 
             summary = self.rain_summary(rows)
             detail_text = self.rain_detail_text(rows)
